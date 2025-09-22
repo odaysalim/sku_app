@@ -1,5 +1,4 @@
 import React, { useState, useMemo, useCallback } from 'react';
-
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { ChevronRight, Home, ArrowLeft, Upload, BarChart3 } from 'lucide-react';
 
@@ -12,6 +11,22 @@ const SKUDashboard = () => {
 
   // Available metrics (will be populated from CSV headers)
   const [availableMetrics, setAvailableMetrics] = useState(['Margin', 'Revenue', 'Cost', 'No of Transactions']);
+
+  // ---------- helpers ----------
+  const isNumberLike = (v) =>
+    typeof v === 'number' ||
+    (typeof v === 'string' && v.trim() !== '' && !isNaN(parseFloat(v.replace(/,/g, ''))));
+
+  const toNumber = (v) => (isNumberLike(v) ? parseFloat(String(v).replace(/,/g, '')) : 0);
+
+  // case-insensitive getter for numeric fields
+  const getNum = (obj, candidates) => {
+    for (const key of Object.keys(obj)) {
+      const lower = key.toLowerCase();
+      if (candidates.some((c) => c.toLowerCase() === lower)) return toNumber(obj[key]);
+    }
+    return 0;
+  };
 
   // Handle CSV file upload
   const handleFileUpload = async (event) => {
@@ -29,81 +44,80 @@ const SKUDashboard = () => {
     try {
       const text = await file.text();
       const lines = text.split('\n').filter(line => line.trim());
-      
+
       if (lines.length < 2) {
         throw new Error('CSV file must have at least a header row and one data row');
       }
 
-      // Parse CSV (simple implementation)
+      // Parse CSV (simple)
       const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
       const rows = lines.slice(1).map(line => {
         const values = line.split(',').map(v => v.trim().replace(/"/g, ''));
         const row = {};
         headers.forEach((header, index) => {
-          row[header] = values[index] || '';
+          row[header] = values[index] ?? '';
         });
         return row;
       });
 
-      // Validate required columns
-      const requiredColumns = ['category', 'sub-category', 'item', 'sku_code'];
-      const missingColumns = requiredColumns.filter(col => 
-        !headers.find(h => h.toLowerCase().includes(col.toLowerCase().replace('-', '_')))
-      );
+      // Validate required columns (accepts sub-category / sub_category)
+      const required = ['category', 'sub-category|sub_category', 'item', 'sku_code'];
+      const missing = [];
 
-      if (missingColumns.length > 0) {
-        throw new Error(`Missing required columns: ${missingColumns.join(', ')}`);
-      }
+      const hasCol = (name) => {
+        if (name.includes('|')) {
+          const opts = name.split('|');
+          return headers.some(h => opts.includes(h.toLowerCase()));
+        }
+        return headers.some(h => h.toLowerCase() === name);
+      };
 
-      // Normalize column names and convert numeric values
+      headers.forEach((h, i) => (headers[i] = h)); // keep as-is for numeric keys
+
+      required.forEach((r) => { if (!hasCol(r)) missing.push(r); });
+      if (missing.length > 0) throw new Error(`Missing required columns: ${missing.join(', ')}`);
+
+      // Normalize rows -> canonical keys + preserve original numeric columns
       const normalizedData = rows.map(row => {
-        const normalizedRow = {};
-        
-        // Map columns to standard names
-        Object.keys(row).forEach(key => {
-          const lowerKey = key.toLowerCase();
-          if (lowerKey.includes('category') && !lowerKey.includes('sub')) {
-            normalizedRow.category = row[key];
-          } else if (lowerKey.includes('sub') && lowerKey.includes('category')) {
-            normalizedRow.sub_category = row[key];
-          } else if (lowerKey.includes('item')) {
-            normalizedRow.item = row[key];
-          } else if (lowerKey.includes('sku') && lowerKey.includes('code')) {
-            normalizedRow.sku_code = row[key];
-          } else if (lowerKey.includes('sku') && lowerKey.includes('description')) {
-            normalizedRow.sku_description = row[key];
-          } else {
-            // For numeric columns, try to convert to numbers
-            const value = row[key];
-            if (value && !isNaN(parseFloat(value.replace(/,/g, '')))) {
-              normalizedRow[key] = parseFloat(value.replace(/,/g, ''));
-            } else {
-              normalizedRow[key] = value;
-            }
+        const out = {};
+
+        // map canonical keys
+        Object.keys(row).forEach((key) => {
+          const lower = key.toLowerCase();
+          if (lower === 'category') out.category = row[key];
+          else if (lower === 'sub-category' || lower === 'sub_category') out.sub_category = row[key];
+          else if (lower === 'item') out.item = row[key];
+          else if (lower === 'sku_code') out.sku_code = row[key];
+          else if (lower === 'sku_description') out.sku_description = row[key];
+          else {
+            // keep all other columns; convert numbers if possible
+            out[key] = isNumberLike(row[key]) ? toNumber(row[key]) : row[key];
           }
         });
 
-        return normalizedRow;
-      }).filter(row => row.category && row.sub_category && row.item); // Filter out incomplete rows
+        return out;
+      }).filter(r => r.category && r.sub_category && r.item);
 
-      // Find available numeric metrics
-      const numericColumns = headers.filter(header => {
-        const sampleValue = normalizedData[0] && normalizedData[0][header];
-        return typeof sampleValue === 'number';
-      });
+      // Determine numeric columns by scanning normalized row keys
+      const sample = normalizedData[0] || {};
+      const numericCols = Object.keys(sample).filter(k => typeof sample[k] === 'number');
+
+      // Add "Margin %" if both margin & revenue exist (any case)
+      const hasMargin = Object.keys(sample).some(k => k.toLowerCase() === 'margin');
+      const hasRevenue = Object.keys(sample).some(k => k.toLowerCase() === 'revenue');
+
+      const metrics = [...numericCols];
+      if (hasMargin && hasRevenue && !metrics.includes('Margin %')) metrics.push('Margin %');
 
       setData(normalizedData);
-      setAvailableMetrics(numericColumns);
-      
-      // Set default metric to Margin if available, otherwise first numeric column
-      if (numericColumns.includes('Margin')) {
-        setSelectedMetric('Margin');
-      } else if (numericColumns.length > 0) {
-        setSelectedMetric(numericColumns[0]);
-      }
+      setAvailableMetrics(metrics);
 
-      setDrillPath([]); // Reset drill path when new data is loaded
-      
+      // default metric preference
+      if (metrics.includes('Margin')) setSelectedMetric('Margin');
+      else if (metrics.length > 0) setSelectedMetric(metrics[0]);
+
+      setDrillPath([]);
+
     } catch (err) {
       setError(`Error loading CSV: ${err.message}`);
     } finally {
@@ -111,118 +125,86 @@ const SKUDashboard = () => {
     }
   };
 
-  // Color scheme for different levels
+  // Color scheme
   const getBarColor = useCallback((name, level) => {
     const colors = {
       0: ['#8884d8', '#82ca9d', '#ffc658', '#ff7c7c', '#8dd1e1'],
       1: ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#06b6d4'],
       2: ['#4f46e5', '#059669', '#d97706', '#dc2626', '#0891b2']
     };
-    
     const colorSet = colors[level] || colors[0];
     const hash = name.split('').reduce((a, b) => {
       a = ((a << 5) - a) + b.charCodeAt(0);
       return a & a;
     }, 0);
-    
     return colorSet[Math.abs(hash) % colorSet.length];
   }, []);
 
-  // Filter data based on current drill path
+  // Filtered data based on drill path
   const filteredData = useMemo(() => {
     let filtered = [...data];
-    
-    if (drillPath.length > 0) {
-      filtered = filtered.filter(item => item.category === drillPath[0]);
-    }
-    if (drillPath.length > 1) {
-      filtered = filtered.filter(item => item.sub_category === drillPath[1]);
-    }
-    if (drillPath.length > 2) {
-      filtered = filtered.filter(item => item.item === drillPath[2]);
-    }
-    
+    if (drillPath.length > 0) filtered = filtered.filter(i => i.category === drillPath[0]);
+    if (drillPath.length > 1) filtered = filtered.filter(i => i.sub_category === drillPath[1]);
+    if (drillPath.length > 2) filtered = filtered.filter(i => i.item === drillPath[2]);
     return filtered;
   }, [data, drillPath]);
 
-  // Determine current grouping column and chart data
+  // Grouping + chart data (supports Margin %)
   const { groupColumn, chartData, isLeafLevel } = useMemo(() => {
-    if (data.length === 0) {
-      return { groupColumn: null, chartData: [], isLeafLevel: false };
-    }
+    if (data.length === 0) return { groupColumn: null, chartData: [], isLeafLevel: false };
 
     let groupCol;
     let isLeaf = false;
-    
-    if (drillPath.length === 0) {
-      groupCol = 'category';
-    } else if (drillPath.length === 1) {
-      groupCol = 'sub_category';
-    } else if (drillPath.length === 2) {
-      groupCol = 'item';
-    } else {
-      groupCol = null;
-      isLeaf = true;
-    }
+
+    if (drillPath.length === 0) groupCol = 'category';
+    else if (drillPath.length === 1) groupCol = 'sub_category';
+    else if (drillPath.length === 2) groupCol = 'item';
+    else { groupCol = null; isLeaf = true; }
 
     if (groupCol) {
-      // Group by the current column and sum the selected metric
       const grouped = filteredData.reduce((acc, item) => {
         const key = item[groupCol];
-        if (!acc[key]) {
-          acc[key] = 0;
+        if (!acc[key]) acc[key] = { sum: 0, margin: 0, revenue: 0 };
+
+        if (selectedMetric === 'Margin %') {
+          acc[key].margin += getNum(item, ['Margin', 'margin']);
+          acc[key].revenue += getNum(item, ['Revenue', 'revenue']);
+        } else {
+          const v = toNumber(item[selectedMetric]);
+          acc[key].sum += v;
         }
-        const value = item[selectedMetric];
-        acc[key] += (typeof value === 'number' ? value : 0);
         return acc;
       }, {});
 
-      const chartData = Object.entries(grouped).map(([name, value]) => ({
-        name,
-        value,
-        fill: getBarColor(name, drillPath.length)
-      }));
+      const chartData = Object.entries(grouped).map(([name, agg]) => {
+        const value = selectedMetric === 'Margin %'
+          ? (agg.revenue > 0 ? (agg.margin / agg.revenue) * 100 : 0)
+          : agg.sum;
+        return { name, value, fill: getBarColor(name, drillPath.length) };
+      });
 
       return { groupColumn: groupCol, chartData, isLeafLevel: false };
     }
-    
+
     return { groupColumn: null, chartData: [], isLeafLevel: true };
   }, [filteredData, drillPath, selectedMetric, getBarColor, data]);
 
-  // Handle bar click for drilling down
-  const handleBarClick = (data) => {
-    if (data && data.name) {
-      setDrillPath(prev => [...prev, data.name]);
-    }
-  };
-
-  // Handle chart background click for drilling up
+  // Handlers
+  const handleBarClick = (d) => { if (d && d.name) setDrillPath(prev => [...prev, d.name]); };
   const handleChartClick = (e) => {
     if (e.target.tagName === 'svg' || e.target.classList.contains('recharts-wrapper')) {
-      if (drillPath.length > 0) {
-        setDrillPath(prev => prev.slice(0, -1));
-      }
+      if (drillPath.length > 0) setDrillPath(prev => prev.slice(0, -1));
     }
   };
+  const goBack = () => { if (drillPath.length > 0) setDrillPath(prev => prev.slice(0, -1)); };
+  const goHome = () => setDrillPath([]);
 
-  // Navigation handlers
-  const goBack = () => {
-    if (drillPath.length > 0) {
-      setDrillPath(prev => prev.slice(0, -1));
-    }
-  };
+  // Formatters
+  const formatNumber = (num) => (typeof num === 'number'
+    ? num.toLocaleString(undefined, { maximumFractionDigits: 2 })
+    : num);
 
-  const goHome = () => {
-    setDrillPath([]);
-  };
-
-  // Format number for display
-  const formatNumber = (num) => {
-    if (typeof num !== 'number') return num;
-    return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  };
-
-  // Breadcrumb navigation
+  // Breadcrumbs
   const breadcrumbs = ['All Categories', ...drillPath];
 
   return (
@@ -234,8 +216,8 @@ const SKUDashboard = () => {
             <BarChart3 className="w-8 h-8 mr-3 text-blue-600" />
             SKU Drilldown Dashboard
           </h1>
-          
-          {/* File Upload Section */}
+
+          {/* File Upload */}
           {data.length === 0 && (
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
               <h2 className="text-lg font-semibold text-gray-800 mb-4">Upload Your Data</h2>
@@ -245,34 +227,20 @@ const SKUDashboard = () => {
                   <span className="text-lg font-medium text-blue-600 hover:text-blue-500">
                     Click to upload CSV file
                   </span>
-                  <input
-                    type="file"
-                    accept=".csv"
-                    onChange={handleFileUpload}
-                    className="hidden"
-                  />
+                  <input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
                 </label>
                 <p className="text-gray-500 mt-2">
-                  CSV should contain: category, sub-category, item, sku_code, and your metrics
+                  CSV should contain: category, sub_category (or sub-category), item, sku_code, and your metrics
                 </p>
               </div>
-              {isLoading && (
-                <div className="text-center mt-4">
-                  <div className="text-blue-600">Loading data...</div>
-                </div>
-              )}
-              {error && (
-                <div className="text-center mt-4">
-                  <div className="text-red-600 bg-red-50 p-3 rounded-md">{error}</div>
-                </div>
-              )}
+              {isLoading && (<div className="text-center mt-4 text-blue-600">Loading data...</div>)}
+              {error && (<div className="text-center mt-4"><div className="text-red-600 bg-red-50 p-3 rounded-md">{error}</div></div>)}
             </div>
           )}
-          
+
           {/* Controls */}
           {data.length > 0 && (
             <>
-              {/* Metric Selector */}
               <div className="bg-white rounded-lg shadow-sm p-4 mb-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-4">
@@ -286,16 +254,10 @@ const SKUDashboard = () => {
                         <option key={metric} value={metric}>{metric}</option>
                       ))}
                     </select>
-                    <div className="text-sm text-gray-500">
-                      {data.length} records loaded
-                    </div>
+                    <div className="text-sm text-gray-500">{data.length} records loaded</div>
                   </div>
                   <button
-                    onClick={() => {
-                      setData([]);
-                      setDrillPath([]);
-                      setError('');
-                    }}
+                    onClick={() => { setData([]); setDrillPath([]); setError(''); }}
                     className="text-sm text-blue-600 hover:text-blue-800"
                   >
                     Load different file
@@ -303,7 +265,7 @@ const SKUDashboard = () => {
                 </div>
               </div>
 
-              {/* Navigation Bar */}
+              {/* Nav bar */}
               <div className="flex items-center justify-between bg-white rounded-lg shadow-sm p-4">
                 <div className="flex items-center space-x-2">
                   {breadcrumbs.map((crumb, index) => (
@@ -324,7 +286,7 @@ const SKUDashboard = () => {
                     </div>
                   ))}
                 </div>
-                
+
                 <div className="flex space-x-2">
                   {drillPath.length > 0 && (
                     <button
@@ -359,42 +321,42 @@ const SKUDashboard = () => {
                     {drillPath.length === 1 && `${drillPath[0]} - Sub Categories`}
                     {drillPath.length === 2 && `${drillPath[1]} - Items`}
                   </h2>
-                  <p className="text-gray-600 text-sm mt-1">
-                    Click on a bar to drill down, or click outside bars to go back
-                  </p>
+                  <p className="text-gray-600 text-sm mt-1">Click on a bar to drill down, or click outside bars to go back</p>
                 </div>
-                
-                <div 
-                  className="h-96 cursor-pointer"
-                  onClick={handleChartClick}
-                >
+
+                <div className="h-96 cursor-pointer" onClick={handleChartClick}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={chartData}
-                      margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
-                    >
+                    <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis 
-                        dataKey="name" 
+                      <XAxis
+                        dataKey="name"
                         tick={{ fontSize: 12 }}
                         angle={-45}
                         textAnchor="end"
                         height={80}
                         interval={0}
                       />
-                      <YAxis tick={{ fontSize: 12 }} />
-                      <Tooltip 
-                        formatter={(value) => [formatNumber(value), selectedMetric]}
+                      <YAxis
+                        tick={{ fontSize: 12 }}
+                        tickFormatter={(v) =>
+                          selectedMetric === 'Margin %' ? `${formatNumber(v)}%` : formatNumber(v)
+                        }
+                      />
+                      <Tooltip
+                        formatter={(value) => [
+                          selectedMetric === 'Margin %' ? `${formatNumber(value)}%` : formatNumber(value),
+                          selectedMetric
+                        ]}
                         labelStyle={{ color: '#374151' }}
-                        contentStyle={{ 
-                          backgroundColor: 'white', 
+                        contentStyle={{
+                          backgroundColor: 'white',
                           border: '1px solid #e5e7eb',
                           borderRadius: '8px',
                           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
                         }}
                       />
-                      <Bar 
-                        dataKey="value" 
+                      <Bar
+                        dataKey="value"
                         fill="#8884d8"
                         radius={[4, 4, 0, 0]}
                         cursor="pointer"
@@ -407,30 +369,18 @@ const SKUDashboard = () => {
             ) : (
               <div>
                 <div className="mb-4">
-                  <h2 className="text-xl font-semibold text-gray-800">
-                    SKU Details - {drillPath[2]}
-                  </h2>
-                  <p className="text-gray-600 text-sm mt-1">
-                    Individual SKU information
-                  </p>
+                  <h2 className="text-xl font-semibold text-gray-800">SKU Details - {drillPath[2]}</h2>
+                  <p className="text-gray-600 text-sm mt-1">Individual SKU information</p>
                 </div>
-                
+
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
                       <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          SKU Code
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Description
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Category
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Sub Category
-                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">SKU Code</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Description</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sub Category</th>
                         {availableMetrics.map(metric => (
                           <th key={metric} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             {metric}
@@ -439,23 +389,22 @@ const SKUDashboard = () => {
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                      {filteredData.map((row, index) => (
-                        <tr key={index} className="hover:bg-gray-50">
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                            {row.sku_code}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {row.sku_description || '-'}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {row.category}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {row.sub_category}
-                          </td>
+                      {filteredData.map((row, idx) => (
+                        <tr key={idx} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{row.sku_code}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{row.sku_description || '-'}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{row.category}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{row.sub_category}</td>
                           {availableMetrics.map(metric => (
                             <td key={metric} className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                              {formatNumber(row[metric])}
+                              {metric === 'Margin %'
+                                ? (() => {
+                                    const m = getNum(row, ['Margin', 'margin']);
+                                    const r = getNum(row, ['Revenue', 'revenue']);
+                                    const pct = r > 0 ? (m / r) * 100 : 0;
+                                    return `${formatNumber(pct)}%`;
+                                  })()
+                                : formatNumber(row[metric])}
                             </td>
                           ))}
                         </tr>

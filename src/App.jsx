@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
 
-import React, { useState, useMemo, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { ChevronRight, Home, ArrowLeft, Upload, BarChart3 } from 'lucide-react';
 

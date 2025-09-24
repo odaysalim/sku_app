@@ -8,8 +8,10 @@ import {
   Tooltip,
   ResponsiveContainer,
   LabelList,
+  Cell
 } from 'recharts';
 import { ChevronRight, Home, ArrowLeft, Upload, BarChart3 } from 'lucide-react';
+import Papa from "papaparse";
 
 const SKUDashboard = () => {
   const [data, setData] = useState([]);

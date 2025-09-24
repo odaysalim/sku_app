@@ -83,7 +83,7 @@ const SKUDashboard = () => {
     return `rgb(${lerp(from.r, to.r, p)}, ${lerp(from.g, to.g, p)}, ${lerp(from.b, to.b, p)})`;
   };
 
-  // ---------- CSV/TSV upload (FIXED) ----------
+  // ---------- CSV/TSV upload ----------
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -95,32 +95,22 @@ const SKUDashboard = () => {
       Papa.parse(file, {
         header: true,
         skipEmptyLines: true,
-        dynamicTyping: false,                         // keep as string; we convert safely
-        delimitersToGuess: ['\t', ',', ';', '|'],     // auto-detect TSV or CSV
+        dynamicTyping: false,
+        delimitersToGuess: ['\t', ',', ';', '|'],
         transform: (v) => (typeof v === 'string' ? v.trim() : v),
         complete: ({ data: rows, errors }) => {
-          if (errors?.length) {
-            // show first parse error
-            setError(`Parse warning: ${errors[0].message}`);
-          }
+          if (errors?.length) setError(`Parse warning: ${errors[0].message}`);
+          if (!rows || rows.length === 0) throw new Error('No rows found in file');
 
-          if (!rows || rows.length === 0) {
-            throw new Error('No rows found in file');
-          }
-
-          // Normalize each row:
-          // - accept 'sub-category' or 'sub_category'
-          // - convert known measure columns to numbers (case-insensitive)
           const norm = (x) => String(x || '').toLowerCase().replace(/\s+|_/g, '');
 
           const normalized = rows
             .map((r) => {
               const out = {};
-              // map canonical dims
+              // canonical dims
               for (const k of Object.keys(r)) {
                 const nk = norm(k);
                 const val = r[k];
-
                 if (nk === 'category') out.category = val;
                 else if (nk === 'subcategory') out.sub_category = val;
                 else if (nk === 'item') out.item = val;
@@ -128,7 +118,7 @@ const SKUDashboard = () => {
                 else if (nk === 'skudescription') out.sku_description = val;
               }
 
-              // Convert measures (keep original header names intact too)
+              // measures
               const measureNames = [
                 'revenue',
                 'margin',
@@ -143,7 +133,6 @@ const SKUDashboard = () => {
                 if (measureNames.includes(nk)) {
                   out[k] = toNumber(r[k]);
                 } else if (!(k in out)) {
-                  // copy other columns through as-is
                   out[k] = r[k];
                 }
               }
@@ -156,11 +145,9 @@ const SKUDashboard = () => {
             throw new Error('No valid rows after normalization (check category/sub-category/item)');
           }
 
-          // Determine numeric columns by scanning first row
           const sample = normalized[0];
           const numericCols = Object.keys(sample).filter((k) => typeof sample[k] === 'number');
 
-          // Add "Margin %" if both margin & revenue exist (any case)
           const hasMargin = Object.keys(sample).some((k) => norm(k) === 'margin');
           const hasRevenue = Object.keys(sample).some((k) => norm(k) === 'revenue');
 
@@ -171,12 +158,9 @@ const SKUDashboard = () => {
           setAvailableMetrics(metrics.length ? metrics : ['Margin', 'Revenue', 'Cost', 'No of Transactions']);
           if (metrics.includes('Margin')) setSelectedMetric('Margin');
           else if (metrics.length > 0) setSelectedMetric(metrics[0]);
-
           setDrillPath([]);
         },
-        error: (e) => {
-          throw e;
-        },
+        error: (e) => { throw e; },
       });
     } catch (err) {
       setError(`Error loading file: ${err.message}`);
@@ -224,7 +208,6 @@ const SKUDashboard = () => {
         return acc;
       }, {});
 
-      // base values
       let temp = Object.entries(grouped).map(([name, agg]) => {
         const value =
           selectedMetric === 'Margin %'
@@ -235,10 +218,10 @@ const SKUDashboard = () => {
         return { name, value };
       });
 
-      // alphabetical sort
+      // alphabetical
       temp.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
-      // assign colors
+      // colors
       if (selectedMetric === 'Margin %') {
         temp = temp.map((d) => ({ ...d, fill: marginColor(d.value) }));
       } else {
@@ -247,7 +230,7 @@ const SKUDashboard = () => {
         const max = Math.max(...vals);
         const span = max - min || 1;
         temp = temp.map((d) => {
-          const t = (d.value - min) / span; // 0..1
+          const t = (d.value - min) / span;
           return { ...d, fill: purpleShade(t) };
         });
       }
@@ -275,19 +258,19 @@ const SKUDashboard = () => {
   // Breadcrumbs
   const breadcrumbs = ['All Categories', ...drillPath];
 
-  // ---- custom label renderer: avoids overlapping with axis ----
+  // ---- custom label renderer: avoids overlapping with axis (dynamic offset) ----
   const renderBarLabel = ({ x, y, width, height, value }) => {
     const isNeg = Number(value) < 0;
     const cx = x + width / 2;
-  
-    // If the bar is tiny (|value| near 0 => small height), push the label farther
-    const minAway = 16;      // base offset
-    const extraForTiny = Math.max(0, 22 - Math.min(22, height)); // smaller bars => bigger push
-    const away = minAway + extraForTiny;
-  
-    const barEndY = isNeg ? (y + height) : y;   // bar end nearest the zero line
+
+    // Dynamic offset: tiny bars get larger offset from the bar end / zero line
+    const base = 16; // px
+    const extraForTiny = Math.max(0, 22 - Math.min(22, height));
+    const away = base + extraForTiny;
+
+    const barEndY = isNeg ? (y + height) : y;
     const ty = isNeg ? (barEndY + away) : (barEndY - away);
-  
+
     return (
       <text
         x={cx}
@@ -450,17 +433,25 @@ const SKUDashboard = () => {
                         padding={{ top: 20, bottom: 28 }}
                         domain={
                           selectedMetric === 'Margin %'
-                            ? ((dataMin, dataMax) => [dataMin - 5, dataMax + 5]) // extra space above/below zero
+                            ? ((dataMin, dataMax) => [dataMin - 5, dataMax + 5]) // extra headroom around zero
                             : ['auto', 'auto']
                         }
                       />
+                      <Tooltip
+                        formatter={(value) => [formatMetricValue(value), selectedMetric]}
+                        labelStyle={{ color: '#374151' }}
+                        contentStyle={{
+                          backgroundColor: 'white',
+                          border: '1px solid #e5e7eb',
+                          borderRadius: '8px',
+                          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                        }}
+                      />
                       <Bar dataKey="value" radius={[4, 4, 0, 0]} cursor="pointer" onClick={handleBarClick}>
-                        {/* per-bar colors from data.fill */}
                         {chartData.map((entry, idx) => (
                           <Cell key={`c-${idx}`} fill={entry.fill} />
                         ))}
-
-                        {/* custom labels that avoid the axis */}
+                        {/* custom labels (no overlap with axis) */}
                         <LabelList dataKey="value" content={renderBarLabel} />
                       </Bar>
                     </BarChart>

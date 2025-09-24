@@ -275,6 +275,26 @@ const SKUDashboard = () => {
   // Breadcrumbs
   const breadcrumbs = ['All Categories', ...drillPath];
 
+  // ---- custom label renderer: avoids overlapping with axis ----
+  const renderBarLabel = ({ x, y, width, height, value }) => {
+    const isNeg = Number(value) < 0;
+    const cx = x + width / 2;
+    // push a bit away from the bar end (above if +, below if -)
+    const ty = isNeg ? y + height + 14 : y - 6;
+
+    return (
+      <text
+        x={cx}
+        y={ty}
+        textAnchor="middle"
+        fontSize={12}
+        fill={isNeg ? '#dc2626' : '#166534'}
+      >
+        {formatMetricValue(value)}
+      </text>
+    );
+  };
+
   return (
     <div className="p-6 bg-gray-50 min-h-screen">
       <div className="max-w-6xl mx-auto">
@@ -421,6 +441,7 @@ const SKUDashboard = () => {
                         tickFormatter={(v) =>
                           selectedMetric === 'Margin %' ? `${Number(v).toFixed(1)}%` : compactNumber(v)
                         }
+                        padding={{ top: 16, bottom: 24 }}   // <-- extra room to avoid overlap near axis
                       />
                       <Tooltip
                         formatter={(value) => [formatMetricValue(value), selectedMetric]}
@@ -437,12 +458,9 @@ const SKUDashboard = () => {
                         {chartData.map((entry, idx) => (
                           <Cell key={`c-${idx}`} fill={entry.fill} />
                         ))}
-                        <LabelList
-                          dataKey="value"
-                          position="top"
-                          formatter={(v) => formatMetricValue(v)}
-                          className="text-xs"
-                        />
+
+                        {/* custom labels that avoid the axis */}
+                        <LabelList dataKey="value" content={renderBarLabel} />
                       </Bar>
                     </BarChart>
                   </ResponsiveContainer>

@@ -32,7 +32,6 @@ const SKUDashboard = () => {
     if (v === null || v === undefined) return false;
     const s = String(v).trim().toLowerCase().replace(/,/g, '');
     if (s === '') return false;
-    // supports 1.2k, 3m, 4b
     const m = s.match(/^(-?\d+(?:\.\d+)?)([kmb])?$/i);
     return !!m || !isNaN(Number(s));
   };
@@ -46,7 +45,6 @@ const SKUDashboard = () => {
     return parseFloat(m[1]) * mult;
   };
 
-  // case-insensitive getter for numeric fields
   const getNum = (obj, candidates) => {
     const norm = (x) => x.toLowerCase().replace(/\s+|_/g, '');
     const keys = Object.keys(obj);
@@ -60,20 +58,25 @@ const SKUDashboard = () => {
 
   // --- number/label formatting ---
   const compactNumber = (n) => {
-    const num = Number(n) || 0;
+    const num = Number(n);
     const abs = Math.abs(num);
+    if (!Number.isFinite(num)) return '0';
     if (abs >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(1)}B`;
     if (abs >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`;
     if (abs >= 1_000) return `${(num / 1_000).toFixed(1)}K`;
     return String(Math.round(num));
   };
 
-  const formatMetricValue = (val) =>
-    selectedMetric === 'Margin %' ? `${Number(val).toFixed(1)}%` : compactNumber(val);
+  const formatMetricValue = (val) => {
+    if (selectedMetric === 'Margin %') {
+      const num = Number(val);
+      return Number.isFinite(num) ? `${num.toFixed(1)}%` : '0.0%';
+    }
+    return compactNumber(val);
+  };
 
   // colors
-  const marginColor = (v) => (v > 0 ? '#16a34a' : v < 0 ? '#dc2626' : '#9ca3af'); // green / red / grey
-  // purple gradient from light (#ede9fe) -> dark (#5b21b6)
+  const marginColor = (v) => (v > 0 ? '#16a34a' : v < 0 ? '#dc2626' : '#9ca3af');
   const purpleShade = (t) => {
     const clamp = (x) => Math.max(0, Math.min(1, x));
     const lerp = (a, b, p) => Math.round(a + (b - a) * clamp(p));
@@ -107,7 +110,6 @@ const SKUDashboard = () => {
           const normalized = rows
             .map((r) => {
               const out = {};
-              // canonical dims
               for (const k of Object.keys(r)) {
                 const nk = norm(k);
                 const val = r[k];
@@ -118,7 +120,6 @@ const SKUDashboard = () => {
                 else if (nk === 'skudescription') out.sku_description = val;
               }
 
-              // measures
               const measureNames = [
                 'revenue',
                 'margin',
@@ -263,12 +264,12 @@ const SKUDashboard = () => {
     const isNeg = Number(value) < 0;
     const cx = x + width / 2;
 
-    // Dynamic offset: tiny bars get larger offset from the bar end / zero line
+    const h = Math.max(0, Number(height) || 0);
     const base = 16; // px
-    const extraForTiny = Math.max(0, 22 - Math.min(22, height));
+    const extraForTiny = Math.max(0, 22 - Math.min(22, h));
     const away = base + extraForTiny;
 
-    const barEndY = isNeg ? (y + height) : y;
+    const barEndY = isNeg ? (y + h) : y;
     const ty = isNeg ? (barEndY + away) : (barEndY - away);
 
     return (
@@ -428,12 +429,18 @@ const SKUDashboard = () => {
                       <YAxis
                         tick={{ fontSize: 12 }}
                         tickFormatter={(v) =>
-                          selectedMetric === 'Margin %' ? `${Number(v).toFixed(1)}%` : compactNumber(v)
+                          selectedMetric === 'Margin %'
+                            ? (() => {
+                                const n = Number(v);
+                                return Number.isFinite(n) ? `${n.toFixed(1)}%` : '0.0%';
+                              })()
+                            : compactNumber(v)
                         }
                         padding={{ top: 20, bottom: 28 }}
+                        // IMPORTANT: use safe string expressions so Recharts never sees undefined in a callback
                         domain={
                           selectedMetric === 'Margin %'
-                            ? ((dataMin, dataMax) => [dataMin - 5, dataMax + 5]) // extra headroom around zero
+                            ? ['dataMin - 5', 'dataMax + 5']
                             : ['auto', 'auto']
                         }
                       />
@@ -451,7 +458,6 @@ const SKUDashboard = () => {
                         {chartData.map((entry, idx) => (
                           <Cell key={`c-${idx}`} fill={entry.fill} />
                         ))}
-                        {/* custom labels (no overlap with axis) */}
                         <LabelList dataKey="value" content={renderBarLabel} />
                       </Bar>
                     </BarChart>

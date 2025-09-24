@@ -279,9 +279,15 @@ const SKUDashboard = () => {
   const renderBarLabel = ({ x, y, width, height, value }) => {
     const isNeg = Number(value) < 0;
     const cx = x + width / 2;
-    // push a bit away from the bar end (above if +, below if -)
-    const ty = isNeg ? y + height + 14 : y - 6;
-
+  
+    // If the bar is tiny (|value| near 0 => small height), push the label farther
+    const minAway = 16;      // base offset
+    const extraForTiny = Math.max(0, 22 - Math.min(22, height)); // smaller bars => bigger push
+    const away = minAway + extraForTiny;
+  
+    const barEndY = isNeg ? (y + height) : y;   // bar end nearest the zero line
+    const ty = isNeg ? (barEndY + away) : (barEndY - away);
+  
     return (
       <text
         x={cx}
@@ -441,17 +447,12 @@ const SKUDashboard = () => {
                         tickFormatter={(v) =>
                           selectedMetric === 'Margin %' ? `${Number(v).toFixed(1)}%` : compactNumber(v)
                         }
-                        padding={{ top: 16, bottom: 24 }}   // <-- extra room to avoid overlap near axis
-                      />
-                      <Tooltip
-                        formatter={(value) => [formatMetricValue(value), selectedMetric]}
-                        labelStyle={{ color: '#374151' }}
-                        contentStyle={{
-                          backgroundColor: 'white',
-                          border: '1px solid #e5e7eb',
-                          borderRadius: '8px',
-                          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-                        }}
+                        padding={{ top: 20, bottom: 28 }}
+                        domain={
+                          selectedMetric === 'Margin %'
+                            ? ((dataMin, dataMax) => [dataMin - 5, dataMax + 5]) // extra space above/below zero
+                            : ['auto', 'auto']
+                        }
                       />
                       <Bar dataKey="value" radius={[4, 4, 0, 0]} cursor="pointer" onClick={handleBarClick}>
                         {/* per-bar colors from data.fill */}

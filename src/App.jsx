@@ -28,14 +28,6 @@ const SKUDashboard = () => {
   ]);
 
   // ---------- helpers ----------
-  const isNumberLike = (v) => {
-    if (v === null || v === undefined) return false;
-    const s = String(v).trim().toLowerCase().replace(/,/g, '');
-    if (s === '') return false;
-    const m = s.match(/^(-?\d+(?:\.\d+)?)([kmb])?$/i);
-    return !!m || !isNaN(Number(s));
-  };
-
   const toNumber = (v) => {
     if (v === null || v === undefined) return 0;
     const s = String(v).trim().toLowerCase().replace(/,/g, '');
@@ -45,6 +37,7 @@ const SKUDashboard = () => {
     return parseFloat(m[1]) * mult;
   };
 
+  // case-insensitive getter for numeric fields
   const getNum = (obj, candidates) => {
     const norm = (x) => x.toLowerCase().replace(/\s+|_/g, '');
     const keys = Object.keys(obj);
@@ -67,16 +60,20 @@ const SKUDashboard = () => {
     return String(Math.round(num));
   };
 
-  const formatMetricValue = (val) => {
-    if (selectedMetric === 'Margin %') {
+  const formatSpecific = (metricName, val) => {
+    const isPct = /%/i.test(metricName) || /margin\s*%/i.test(metricName);
+    if (isPct) {
       const num = Number(val);
       return Number.isFinite(num) ? `${num.toFixed(1)}%` : '0.0%';
     }
     return compactNumber(val);
   };
 
+  const formatMetricValue = (val) =>
+    selectedMetric === 'Margin %' ? `${Number(val).toFixed(1)}%` : compactNumber(val);
+
   // colors
-  const marginColor = (v) => (v > 0 ? '#16a34a' : v < 0 ? '#dc2626' : '#9ca3af');
+  const marginColor = (v) => (v > 0 ? '#16a34a' : v < 0 ? '#dc2626' : '#9ca3af'); // green / red / grey
   const purpleShade = (t) => {
     const clamp = (x) => Math.max(0, Math.min(1, x));
     const lerp = (a, b, p) => Math.round(a + (b - a) * clamp(p));
@@ -179,9 +176,9 @@ const SKUDashboard = () => {
     return filtered;
   }, [data, drillPath]);
 
-  // Grouping + chart data (supports Margin % + gradient coloring + alpha sort)
-  const { groupColumn, chartData, isLeafLevel } = useMemo(() => {
-    if (data.length === 0) return { groupColumn: null, chartData: [], isLeafLevel: false };
+  // Grouping + chart data with full per-group metrics (and colors)
+  const { chartData, isLeafLevel } = useMemo(() => {
+    if (data.length === 0) return { chartData: [], isLeafLevel: false };
 
     let groupCol;
     let isLeaf = false;
@@ -190,57 +187,66 @@ const SKUDashboard = () => {
     else if (drillPath.length === 1) groupCol = 'sub_category';
     else if (drillPath.length === 2) groupCol = 'item';
     else {
-      groupCol = null;
       isLeaf = true;
     }
 
-    if (groupCol) {
-      const grouped = filteredData.reduce((acc, item) => {
-        const key = item[groupCol];
-        if (!acc[key]) acc[key] = { sum: 0, margin: 0, revenue: 0 };
+    if (!groupCol) return { chartData: [], isLeafLevel: true };
 
-        if (selectedMetric === 'Margin %') {
-          acc[key].margin += getNum(item, ['Margin', 'margin']);
-          acc[key].revenue += getNum(item, ['Revenue', 'revenue']);
-        } else {
-          const v = toNumber(item[selectedMetric]);
-          acc[key].sum += v;
-        }
-        return acc;
-      }, {});
+    // Build aggregated metrics for every group bucket
+    const grouped = filteredData.reduce((acc, row) => {
+      const key = row[groupCol];
+      if (!acc[key]) acc[key] = { sums: {}, marginSum: 0, revenueSum: 0 };
+      const bucket = acc[key];
 
-      let temp = Object.entries(grouped).map(([name, agg]) => {
-        const value =
-          selectedMetric === 'Margin %'
-            ? agg.revenue > 0
-              ? (agg.margin / agg.revenue) * 100
-              : 0
-            : agg.sum;
-        return { name, value };
-      });
-
-      // alphabetical
-      temp.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-
-      // colors
-      if (selectedMetric === 'Margin %') {
-        temp = temp.map((d) => ({ ...d, fill: marginColor(d.value) }));
-      } else {
-        const vals = temp.map((d) => d.value);
-        const min = Math.min(...vals);
-        const max = Math.max(...vals);
-        const span = max - min || 1;
-        temp = temp.map((d) => {
-          const t = (d.value - min) / span;
-          return { ...d, fill: purpleShade(t) };
+      // sum every numeric metric (except Margin %, which is derived)
+      availableMetrics
+        .filter((m) => m !== 'Margin %')
+        .forEach((m) => {
+          const v = toNumber(row[m]);
+          bucket.sums[m] = (bucket.sums[m] || 0) + (Number.isFinite(v) ? v : 0);
         });
-      }
 
-      return { groupColumn: groupCol, chartData: temp, isLeafLevel: false };
+      // track margin & revenue for % calc (case-insensitive)
+      bucket.marginSum += getNum(row, ['Margin', 'margin']);
+      bucket.revenueSum += getNum(row, ['Revenue', 'revenue']);
+
+      return acc;
+    }, {});
+
+    // Convert to chart rows with colors + derived Margin %
+    let temp = Object.entries(grouped).map(([name, agg]) => {
+      const metricsMap = { ...agg.sums };
+      const marginPct = agg.revenueSum > 0 ? (agg.marginSum / agg.revenueSum) * 100 : 0;
+      metricsMap['Margin %'] = marginPct;
+
+      const plottedValue = metricsMap[selectedMetric] ?? 0;
+
+      return {
+        name,
+        value: plottedValue,
+        __metrics: metricsMap,       // all measures for tooltip
+      };
+    });
+
+    // alphabetical sort
+    temp.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+
+    // assign colors based on selected metric
+    if (selectedMetric === 'Margin %') {
+      temp = temp.map((d) => ({ ...d, fill: marginColor(d.value) }));
+    } else {
+      const vals = temp.map((d) => d.value);
+      const min = Math.min(...vals);
+      const max = Math.max(...vals);
+      const span = max - min || 1;
+      temp = temp.map((d) => {
+        const t = (d.value - min) / span;
+        return { ...d, fill: purpleShade(t) };
+      });
     }
 
-    return { groupColumn: null, chartData: [], isLeafLevel: true };
-  }, [filteredData, drillPath, selectedMetric, data]);
+    return { chartData: temp, isLeafLevel: false };
+  }, [filteredData, drillPath, selectedMetric, data, availableMetrics]);
 
   // Handlers
   const handleBarClick = (d) => {
@@ -256,7 +262,6 @@ const SKUDashboard = () => {
   };
   const goHome = () => setDrillPath([]);
 
-  // Breadcrumbs
   const breadcrumbs = ['All Categories', ...drillPath];
 
   // ---- custom label renderer: avoids overlapping with axis (dynamic offset) ----
@@ -282,6 +287,38 @@ const SKUDashboard = () => {
       >
         {formatMetricValue(value)}
       </text>
+    );
+  };
+
+  // ---- custom tooltip: show ALL measures for this bar ----
+  const CustomTooltip = ({ active, payload, label }) => {
+    if (!active || !payload || !payload.length) return null;
+    const row = payload[0].payload;
+    const metricsMap = row.__metrics || {};
+    // Keep the tooltip order aligned with dropdown
+    const order = availableMetrics;
+
+    return (
+      <div
+        style={{
+          background: 'white',
+          border: '1px solid #e5e7eb',
+          borderRadius: 8,
+          padding: '10px 12px',
+          boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)',
+          maxWidth: 260,
+        }}
+      >
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>{label}</div>
+        {order.map((m) => (
+          <div key={m} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+            <span style={{ color: '#6b7280' }}>{m}</span>
+            <span style={{ color: '#111827' }}>
+              {formatSpecific(m, metricsMap[m] ?? 0)}
+            </span>
+          </div>
+        ))}
+      </div>
     );
   };
 
@@ -437,23 +474,13 @@ const SKUDashboard = () => {
                             : compactNumber(v)
                         }
                         padding={{ top: 20, bottom: 28 }}
-                        // IMPORTANT: use safe string expressions so Recharts never sees undefined in a callback
                         domain={
                           selectedMetric === 'Margin %'
                             ? ['dataMin - 5', 'dataMax + 5']
                             : ['auto', 'auto']
                         }
                       />
-                      <Tooltip
-                        formatter={(value) => [formatMetricValue(value), selectedMetric]}
-                        labelStyle={{ color: '#374151' }}
-                        contentStyle={{
-                          backgroundColor: 'white',
-                          border: '1px solid #e5e7eb',
-                          borderRadius: '8px',
-                          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-                        }}
-                      />
+                      <Tooltip content={<CustomTooltip />} />
                       <Bar dataKey="value" radius={[4, 4, 0, 0]} cursor="pointer" onClick={handleBarClick}>
                         {chartData.map((entry, idx) => (
                           <Cell key={`c-${idx}`} fill={entry.fill} />

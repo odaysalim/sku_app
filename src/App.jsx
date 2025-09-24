@@ -20,7 +20,6 @@ const SKUDashboard = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Available metrics (will be populated from CSV headers)
   const [availableMetrics, setAvailableMetrics] = useState([
     'Margin',
     'Revenue',
@@ -29,17 +28,32 @@ const SKUDashboard = () => {
   ]);
 
   // ---------- helpers ----------
-  const isNumberLike = (v) =>
-    typeof v === 'number' ||
-    (typeof v === 'string' && v.trim() !== '' && !isNaN(parseFloat(v.replace(/,/g, ''))));
+  const isNumberLike = (v) => {
+    if (v === null || v === undefined) return false;
+    const s = String(v).trim().toLowerCase().replace(/,/g, '');
+    if (s === '') return false;
+    // supports 1.2k, 3m, 4b
+    const m = s.match(/^(-?\d+(?:\.\d+)?)([kmb])?$/i);
+    return !!m || !isNaN(Number(s));
+  };
 
-  const toNumber = (v) => (isNumberLike(v) ? parseFloat(String(v).replace(/,/g, '')) : 0);
+  const toNumber = (v) => {
+    if (v === null || v === undefined) return 0;
+    const s = String(v).trim().toLowerCase().replace(/,/g, '');
+    const m = s.match(/^(-?\d+(?:\.\d+)?)([kmb])?$/i);
+    if (!m) return Number(s) || 0;
+    const mult = { k: 1e3, m: 1e6, b: 1e9 }[(m[2] || '').toLowerCase()] || 1;
+    return parseFloat(m[1]) * mult;
+  };
 
   // case-insensitive getter for numeric fields
   const getNum = (obj, candidates) => {
-    for (const key of Object.keys(obj)) {
-      const lower = key.toLowerCase();
-      if (candidates.some((c) => c.toLowerCase() === lower)) return toNumber(obj[key]);
+    const norm = (x) => x.toLowerCase().replace(/\s+|_/g, '');
+    const keys = Object.keys(obj);
+    for (const key of keys) {
+      if (candidates.some((c) => norm(c) === norm(key))) {
+        return toNumber(obj[key]);
+      }
     }
     return 0;
   };
@@ -69,101 +83,103 @@ const SKUDashboard = () => {
     return `rgb(${lerp(from.r, to.r, p)}, ${lerp(from.g, to.g, p)}, ${lerp(from.b, to.b, p)})`;
   };
 
-  // Handle CSV file upload
+  // ---------- CSV/TSV upload (FIXED) ----------
   const handleFileUpload = async (event) => {
-    const file = event.target.files[0];
+    const file = event.target.files?.[0];
     if (!file) return;
-
-    if (!file.name.toLowerCase().endsWith('.csv')) {
-      setError('Please upload a CSV file');
-      return;
-    }
 
     setIsLoading(true);
     setError('');
 
     try {
-      const text = await file.text();
-      const lines = text.split('\n').filter((line) => line.trim());
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        dynamicTyping: false,                         // keep as string; we convert safely
+        delimitersToGuess: ['\t', ',', ';', '|'],     // auto-detect TSV or CSV
+        transform: (v) => (typeof v === 'string' ? v.trim() : v),
+        complete: ({ data: rows, errors }) => {
+          if (errors?.length) {
+            // show first parse error
+            setError(`Parse warning: ${errors[0].message}`);
+          }
 
-      if (lines.length < 2) {
-        throw new Error('CSV file must have at least a header row and one data row');
-      }
+          if (!rows || rows.length === 0) {
+            throw new Error('No rows found in file');
+          }
 
-      // Parse CSV (simple)
-      const headers = lines[0].split(',').map((h) => h.trim().replace(/"/g, ''));
-      const rows = lines.slice(1).map((line) => {
-        const values = line.split(',').map((v) => v.trim().replace(/"/g, ''));
-        const row = {};
-        headers.forEach((header, index) => {
-          row[header] = values[index] ?? '';
-        });
-        return row;
+          // Normalize each row:
+          // - accept 'sub-category' or 'sub_category'
+          // - convert known measure columns to numbers (case-insensitive)
+          const norm = (x) => String(x || '').toLowerCase().replace(/\s+|_/g, '');
+
+          const normalized = rows
+            .map((r) => {
+              const out = {};
+              // map canonical dims
+              for (const k of Object.keys(r)) {
+                const nk = norm(k);
+                const val = r[k];
+
+                if (nk === 'category') out.category = val;
+                else if (nk === 'subcategory') out.sub_category = val;
+                else if (nk === 'item') out.item = val;
+                else if (nk === 'skucode') out.sku_code = (val || '').trim();
+                else if (nk === 'skudescription') out.sku_description = val;
+              }
+
+              // Convert measures (keep original header names intact too)
+              const measureNames = [
+                'revenue',
+                'margin',
+                'cost',
+                'nooftransactions',
+                'nooftrans',
+                'transactions',
+              ];
+
+              for (const k of Object.keys(r)) {
+                const nk = norm(k);
+                if (measureNames.includes(nk)) {
+                  out[k] = toNumber(r[k]);
+                } else if (!(k in out)) {
+                  // copy other columns through as-is
+                  out[k] = r[k];
+                }
+              }
+
+              return out;
+            })
+            .filter((row) => row.category && row.sub_category && row.item);
+
+          if (normalized.length === 0) {
+            throw new Error('No valid rows after normalization (check category/sub-category/item)');
+          }
+
+          // Determine numeric columns by scanning first row
+          const sample = normalized[0];
+          const numericCols = Object.keys(sample).filter((k) => typeof sample[k] === 'number');
+
+          // Add "Margin %" if both margin & revenue exist (any case)
+          const hasMargin = Object.keys(sample).some((k) => norm(k) === 'margin');
+          const hasRevenue = Object.keys(sample).some((k) => norm(k) === 'revenue');
+
+          const metrics = [...numericCols];
+          if (hasMargin && hasRevenue && !metrics.includes('Margin %')) metrics.push('Margin %');
+
+          setData(normalized);
+          setAvailableMetrics(metrics.length ? metrics : ['Margin', 'Revenue', 'Cost', 'No of Transactions']);
+          if (metrics.includes('Margin')) setSelectedMetric('Margin');
+          else if (metrics.length > 0) setSelectedMetric(metrics[0]);
+
+          setDrillPath([]);
+        },
+        error: (e) => {
+          throw e;
+        },
       });
-
-      // Validate required columns (accepts sub-category / sub_category)
-      const required = ['category', 'sub-category|sub_category', 'item', 'sku_code'];
-      const missing = [];
-
-      const hasCol = (name) => {
-        if (name.includes('|')) {
-          const opts = name.split('|');
-          return headers.some((h) => opts.includes(h.toLowerCase()));
-        }
-        return headers.some((h) => h.toLowerCase() === name);
-      };
-
-      headers.forEach((h, i) => (headers[i] = h)); // keep as-is for numeric keys
-
-      required.forEach((r) => {
-        if (!hasCol(r)) missing.push(r);
-      });
-      if (missing.length > 0) throw new Error(`Missing required columns: ${missing.join(', ')}`);
-
-      // Normalize rows -> canonical keys + preserve original numeric columns
-      const normalizedData = rows
-        .map((row) => {
-          const out = {};
-
-          // map canonical keys
-          Object.keys(row).forEach((key) => {
-            const lower = key.toLowerCase();
-            if (lower === 'category') out.category = row[key];
-            else if (lower === 'sub-category' || lower === 'sub_category') out.sub_category = row[key];
-            else if (lower === 'item') out.item = row[key];
-            else if (lower === 'sku_code') out.sku_code = row[key];
-            else if (lower === 'sku_description') out.sku_description = row[key];
-            else {
-              // keep all other columns; convert numbers if possible
-              out[key] = isNumberLike(row[key]) ? toNumber(row[key]) : row[key];
-            }
-          });
-
-          return out;
-        })
-        .filter((r) => r.category && r.sub_category && r.item);
-
-      // Determine numeric columns by scanning normalized row keys
-      const sample = normalizedData[0] || {};
-      const numericCols = Object.keys(sample).filter((k) => typeof sample[k] === 'number');
-
-      // Add "Margin %" if both margin & revenue exist (any case)
-      const hasMargin = Object.keys(sample).some((k) => k.toLowerCase() === 'margin');
-      const hasRevenue = Object.keys(sample).some((k) => k.toLowerCase() === 'revenue');
-
-      const metrics = [...numericCols];
-      if (hasMargin && hasRevenue && !metrics.includes('Margin %')) metrics.push('Margin %');
-
-      setData(normalizedData);
-      setAvailableMetrics(metrics);
-
-      // default metric preference
-      if (metrics.includes('Margin')) setSelectedMetric('Margin');
-      else if (metrics.length > 0) setSelectedMetric(metrics[0]);
-
-      setDrillPath([]);
     } catch (err) {
-      setError(`Error loading CSV: ${err.message}`);
+      setError(`Error loading file: ${err.message}`);
     } finally {
       setIsLoading(false);
     }
@@ -277,13 +293,12 @@ const SKUDashboard = () => {
                 <Upload className="w-12 h-12 text-gray-400 mx-auto mb-4" />
                 <label className="cursor-pointer">
                   <span className="text-lg font-medium text-blue-600 hover:text-blue-500">
-                    Click to upload CSV file
+                    Click to upload CSV/TSV file
                   </span>
-                  <input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
+                  <input type="file" accept=".csv,.tsv,.txt" onChange={handleFileUpload} className="hidden" />
                 </label>
                 <p className="text-gray-500 mt-2">
-                  CSV should contain: category, sub_category (or sub-category), item, sku_code, and
-                  your metrics
+                  File should contain: category, sub_category (or sub-category), item, sku_code, and your metrics
                 </p>
               </div>
               {isLoading && <div className="text-center mt-4 text-blue-600">Loading data...</div>}
@@ -420,7 +435,7 @@ const SKUDashboard = () => {
                       <Bar dataKey="value" radius={[4, 4, 0, 0]} cursor="pointer" onClick={handleBarClick}>
                         {/* per-bar colors from data.fill */}
                         {chartData.map((entry, idx) => (
-                          <cell key={`c-${idx}`} fill={entry.fill} />
+                          <Cell key={`c-${idx}`} fill={entry.fill} />
                         ))}
                         <LabelList
                           dataKey="value"

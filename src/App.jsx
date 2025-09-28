@@ -8,7 +8,10 @@ import Papa from "papaparse";
 
 const DEFAULT_CSV_PATH = `${import.meta.env.BASE_URL}data/sku_data.csv`;
 
-// ---- strict numeric parsing (K/M/B supported). Returns NaN when not numeric.
+/* ---------- utils ---------- */
+const normKey = (k) => String(k || "").toLowerCase().replace(/\s+|-/g, "_");
+
+// strict numeric (supports K/M/B suffix). Returns NaN when not numeric.
 function toNumberStrict(v) {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   if (typeof v !== "string") return NaN;
@@ -19,6 +22,7 @@ function toNumberStrict(v) {
   const mult = { k: 1e3, K: 1e3, m: 1e6, M: 1e6, b: 1e9, B: 1e9 }[m[2]] || 1;
   return parseFloat(m[1]) * mult;
 }
+
 const compact = (n) => {
   const x = Number(n);
   const a = Math.abs(x);
@@ -29,13 +33,6 @@ const compact = (n) => {
   return Math.round(x).toString();
 };
 const asPct = (n) => `${Number(n).toFixed(1)}%`;
-const normKey = (k) => String(k || "").toLowerCase().replace(/\s+|-/g, "_");
-
-const DIM_KEYS = new Set([
-  "category", "sub_category", "item", "sku_code", "sku", "extid",
-  "sku_description", "description", "name"
-]);
-
 const purpleShade = (t) => {
   const clamp = (v) => Math.max(0, Math.min(1, v));
   const lerp = (a, b, p) => Math.round(a + (b - a) * clamp(p));
@@ -46,6 +43,28 @@ const purpleShade = (t) => {
 };
 const marginColor = (v) => (v > 0 ? "#16a34a" : v < 0 ? "#dc2626" : "#9ca3af");
 
+/* ---------- canonical metric names & header aliases ---------- */
+const METRIC_ALIASES = {
+  "Revenue": ["revenue", "rev"],
+  "Margin": ["margin"],
+  "Cost": ["cost"],
+  "No of Transactions": [
+    "no_of_transactions", "nooftransactions", "no_of_trans",
+    "no_of_transacts", "transactions", "no_of_transanctions", "no_of_trx",
+    "no_of_transaction", "no_of_txn", "no_of_txns", "no_of_sales",
+    "no_of_orders", "no_of_purchases", "no_of_tran", "no_of_trns",
+    "no_of_trans", "no_of_transact", "no_of_transcation",
+    "no_of_transactions" /* normalized */,
+    "no of transactions" /* your header (kept raw then normalized) */
+  ]
+};
+
+// headers we will always treat as dimensions
+const DIM_KEYS_CANON = new Set([
+  "category", "sub_category", "item", "sku_code", "sku_description"
+]);
+
+/* ---------- component ---------- */
 function SKUDashboard() {
   const [rows, setRows] = useState([]);
   const [drillPath, setDrillPath] = useState([]); // [category, sub_category]
@@ -54,70 +73,61 @@ function SKUDashboard() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // ---------- normalize headers (category/sub_category/item) ----------
-  const normalizeRows = (raw) =>
-    raw.map((r) => {
+  // normalize and coerce to canonical fields
+  const normalizeRows = (raw) => {
+    return raw.map((r) => {
       const out = {};
+      // map dimensions
       for (const [k, v] of Object.entries(r)) {
         const nk = normKey(k);
         if (nk === "category") out.category = v;
-        else if (nk === "sub_category" || nk === "subcategory") out.sub_category = v;
+        else if (nk === "sub_category" || nk === "subcategory" || nk === "sub_category_1") out.sub_category = v;
         else if (nk === "item") out.item = v;
         else if (nk === "sku" || nk === "sku_code" || nk === "skucode" || nk === "extid") out.sku_code = v;
         else if (nk === "sku_description" || nk === "description") out.sku_description = v;
-        else out[k] = v;
       }
-      return out;
-    }).filter(r => r.category && r.sub_category && r.item);
 
-  // ---------- detect numeric fields (≥80% of rows numeric) ----------
-  const detectNumericFields = (rs) => {
-    const counts = {};
-    rs.forEach((r) => {
-      for (const [k, v] of Object.entries(r)) {
-        if (DIM_KEYS.has(k)) continue;
-        const n = toNumberStrict(v);
-        if (!Number.isNaN(n)) counts[k] = (counts[k] || 0) + 1;
+      // map metrics into canonical names
+      const keyMap = Object.fromEntries(Object.keys(r).map((k) => [normKey(k), k]));
+      for (const [canon, aliases] of Object.entries(METRIC_ALIASES)) {
+        for (const a of aliases) {
+          if (keyMap[a] !== undefined) {
+            const n = toNumberStrict(r[keyMap[a]]);
+            if (!Number.isNaN(n)) out[canon] = n;
+            break;
+          }
+        }
       }
-    });
-    const threshold = Math.max(1, Math.floor(rs.length * 0.8));
-    return Object.keys(counts).filter((k) => counts[k] >= threshold);
+
+      return out;
+    }).filter((r) => r.category && r.sub_category && r.item);
   };
 
-  // ---------- parse & set ----------
   const parseAndSet = (rawRows) => {
     const nrm = normalizeRows(rawRows);
-    // coerce numeric-looking fields (leave dimensions as text)
-    const coerced = nrm.map((r) => {
-      const out = { ...r };
-      for (const [k, v] of Object.entries(out)) {
-        if (DIM_KEYS.has(k)) continue;
-        const n = toNumberStrict(v);
-        if (!Number.isNaN(n)) out[k] = n; // keep original if not numeric
+
+    // determine which canonical metrics are present with at least one numeric value
+    const present = new Set();
+    for (const row of nrm) {
+      for (const canon of Object.keys(METRIC_ALIASES)) {
+        if (Number.isFinite(row[canon])) present.add(canon);
       }
-      return out;
-    });
+    }
 
-    const numericCols = detectNumericFields(coerced);
+    // build metric list (no dimensions, only canonical)
+    const baseMetrics = ["Revenue", "Margin", "Cost", "No of Transactions"].filter((m) =>
+      present.has(m)
+    );
 
-    // Add Margin % only if Revenue and Margin are truly numeric columns
-    const has = (name) => numericCols.some((c) => normKey(c) === normKey(name));
-    const metrics = [...numericCols];
-    if (has("revenue") && has("margin") && !metrics.includes("Margin %")) metrics.push("Margin %");
+    const metrics = [...baseMetrics];
+    if (present.has("Revenue") && present.has("Margin")) metrics.push("Margin %");
 
-    // Preferred ordering if present
-    const order = ["Revenue", "Margin", "Cost", "No of Transactions", "Margin %"];
-    const ordered = [
-      ...order.filter((x) => metrics.find((y) => normKey(y) === normKey(x))),
-      ...metrics.filter((x) => !order.find((y) => normKey(y) === normKey(x))),
-    ];
-
-    setRows(coerced);
-    setAvailableMetrics(ordered);
-    if (!ordered.includes(selectedMetric)) setSelectedMetric(ordered[0] || "");
+    setRows(nrm);
+    setAvailableMetrics(metrics);
+    if (!metrics.includes(selectedMetric)) setSelectedMetric(metrics[0] || "");
   };
 
-  // ---------- autoload CSV ----------
+  // autoload CSV
   useEffect(() => {
     let cancel = false;
     (async () => {
@@ -151,9 +161,9 @@ function SKUDashboard() {
       }
     })();
     return () => { cancel = true; };
-  }, []); // once
+  }, []);
 
-  // ---------- optional manual upload ----------
+  // manual upload (optional)
   const handleFile = (file) => {
     if (!file) return;
     setIsLoading(true);
@@ -166,19 +176,16 @@ function SKUDashboard() {
     });
   };
 
-  // ---------- drill state ----------
+  // drill / grouping
   const currentLevel = drillPath.length; // 0=category,1=sub_category,2=item
   const levelKey = (lvl) => (["category", "sub_category", "item"][lvl] || "category");
 
-  // ---------- aggregate for current level ----------
   const grouped = useMemo(() => {
     if (!rows.length) return [];
-    // filter by drillPath
     let filtered = rows;
     if (drillPath[0]) filtered = filtered.filter((r) => r.category === drillPath[0]);
     if (drillPath[1]) filtered = filtered.filter((r) => r.sub_category === drillPath[1]);
 
-    // group by current level
     const key = levelKey(currentLevel);
     const bucket = new Map();
     for (const r of filtered) {
@@ -188,28 +195,23 @@ function SKUDashboard() {
       bucket.get(k).push(r);
     }
 
-    // aggregate only vetted numeric metrics
-    const metricSet = new Set(availableMetrics.filter((m) => m !== "Margin %"));
     const result = Array.from(bucket.entries()).map(([name, rs]) => {
       const agg = { name };
-      for (const m of metricSet) {
+      // sum canonical metrics
+      for (const m of ["Revenue", "Margin", "Cost", "No of Transactions"]) {
         const sum = rs.reduce((a, r) => a + (Number(r[m]) || 0), 0);
         if (Number.isFinite(sum)) agg[m] = sum;
       }
-      // computed margin %
-      if (metricSet.has("Revenue") && metricSet.has("Margin")) {
-        const rev = agg["Revenue"];
-        const mar = agg["Margin"];
-        if (Number.isFinite(rev) && rev !== 0 && Number.isFinite(mar)) {
-          agg["Margin %"] = (mar / rev) * 100;
-        }
+      // computed Margin %
+      if (Number.isFinite(agg["Revenue"]) && agg["Revenue"] !== 0 && Number.isFinite(agg["Margin"])) {
+        agg["Margin %"] = (agg["Margin"] / agg["Revenue"]) * 100;
       }
       return agg;
     });
 
     result.sort((a, b) => a.name.localeCompare(b.name));
     return result;
-  }, [rows, drillPath, currentLevel, availableMetrics]);
+  }, [rows, drillPath, currentLevel]);
 
   const colorized = useMemo(() => {
     if (!grouped.length || !selectedMetric) return [];
@@ -238,9 +240,7 @@ function SKUDashboard() {
   const renderTooltip = ({ active, payload, label }) => {
     if (!active || !payload?.length) return null;
     const row = payload[0].payload;
-    const entries = availableMetrics
-      .filter((m) => typeof row[m] === "number" || m === "Margin %")
-      .map((m) => [m, row[m]]);
+    const entries = [...availableMetrics].map((m) => [m, row[m]]).filter(([_, v]) => v !== undefined);
     return (
       <div className="rounded-xl bg-white p-3 shadow border text-sm">
         <div className="font-medium mb-1">{label}</div>

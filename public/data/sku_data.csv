@@ -1,0 +1,29 @@
+﻿category,sub_category,item,sku_code,sku_description,revenue,margin,cost,no of transactions
+Animal Protein,Lamb,Other,AAA123,test1,733,-75,677,148
+Condiments & Spices,Table sauces,Salad dressing,AAA124,test2,470,860,410,606
+Pantry & Staples,Snacks,Other,AAA125,test3,181,180,852,450
+Pantry & Staples,Nuts,Pistachios,AAA126,test4,-32,94,597,239
+Dairy & Eggs,Cream,Other,AAA127,test5,853,670,433,754
+Dairy & Eggs,Milk,Full-cream milk,AAA128,test6,810,882,882,961
+Fruit & Veg,Vegetables,Other,AAA129,test7,203,73,78,38
+Dairy & Eggs,Milk,Low-fat milk,AAA130,test8,673,17,94,742
+Pantry & Staples,Flours,Other,AAA131,test9,-78,316,362,159
+Pantry & Staples,Snacks,Other,AAA132,test10,361,200,640,538
+Condiments & Spices,Cooking sauces,Soy sauce,AAA133,test11,72,279,209,407
+Animal Protein,Seafood - Fish,Other,AAA134,test12,501,330,870,-38
+Condiments & Spices,Olives,Black olives,AAA135,test13,121,617,941,599
+Pantry & Staples,Snacks,Other,AAA136,test14,-91,927,605,802
+Bakery & Desserts,Flatbreads,Tortillas,AAA137,test15,665,664,985,621
+Animal Protein,Chicken,Other,AAA138,test16,234,759,38,618
+Bakery & Desserts,Cookies & biscuits,Other,AAA139,test17,-33,244,260,809
+Pantry & Staples,Noodles,Ramen,AAA140,test18,90,229,578,321
+Condiments & Spices,Table sauces,Other,AAA141,test19,910,119,803,121
+Condiments & Spices,Table sauces,Other,AAA142,test20,348,658,939,850
+Condiments & Spices,Table sauces,Other,AAA143,test21,300,567,330,753
+Condiments & Spices,Table sauces,Other,AAA144,test22,582,441,460,317
+Condiments & Spices,Table sauces,Other,AAA145,test23,-94,440,-42,304
+Condiments & Spices,Table sauces,Other,AAA146,test24,483,744,96,736
+Condiments & Spices,Table sauces,Other,AAA147,test25,286,715,237,-12
+Condiments & Spices,Table sauces,Other,AAA148,test26,-23,382,375,210
+Condiments & Spices,Table sauces,Other,AAA149,test27,27,-63,700,395
+Condiments & Spices,Table sauces,Other,AAA150,test28,345,750,1000,474

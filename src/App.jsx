@@ -9,10 +9,69 @@ import {
   ResponsiveContainer,
   LabelList,
   Cell,
-  ReferenceLine
+  Customized,   // <-- added
 } from 'recharts';
 import { ChevronRight, Home, ArrowLeft, Upload, BarChart3 } from 'lucide-react';
 import Papa from "papaparse";
+
+/** --- NEW: SVG layer that draws vertical separators between category groups --- */
+const SeparatorLayer = ({ categories }) => {
+  // This component is rendered by <Customized>, which passes chart internals as props
+  return (
+    <Customized
+      content={(props) => {
+        const { xAxisMap, offset, height } = props || {};
+        if (!xAxisMap || !offset || !height || !categories?.length) return null;
+
+        // Use the first X axis (default)
+        const axisId = Object.keys(xAxisMap)[0];
+        const xAxis = xAxisMap[axisId];
+        const scale = xAxis?.scale;
+        if (!scale || typeof scale.bandwidth !== 'function') return null;
+
+        const bw = scale.bandwidth();
+        // Centers of each band
+        const centers = categories
+          .map((name) => {
+            const x = scale(name);
+            if (x == null) return null;
+            // In Recharts, scale(x) is relative to the chart plot area (not including offset.left)
+            return offset.left + x + bw / 2;
+          })
+          .filter((v) => v != null);
+
+        if (centers.length < 2) return null;
+
+        // Midpoints between centers -> our separators
+        const seps = [];
+        for (let i = 0; i < centers.length - 1; i++) {
+          seps.push((centers[i] + centers[i + 1]) / 2);
+        }
+
+        const y1 = offset.top + 4;                     // a touch below top padding
+        const y2 = height - offset.bottom - 34;        // a touch above x-axis ticks/labels
+
+        return (
+          <g pointerEvents="none">
+            {seps.map((x, idx) => (
+              <line
+                key={`sep-${idx}`}
+                x1={x}
+                x2={x}
+                y1={y1}
+                y2={y2}
+                stroke="#9ca3af"
+                strokeWidth={1}
+                strokeDasharray="3 3"
+                opacity={0.5}
+              />
+            ))}
+          </g>
+        );
+      }}
+    />
+  );
+};
 
 const SKUDashboard = () => {
   const [data, setData] = useState([]);
@@ -192,14 +251,14 @@ const SKUDashboard = () => {
   }, [data, drillPath, selectedOpCo]);
 
   // Build chart data (grouped by OpCo when "All" is selected)
-  const { chartData, isLeafLevel, seriesKeys, valueRange } = useMemo(() => {
-    if (data.length === 0) return { chartData: [], isLeafLevel: false, seriesKeys: [], valueRange: [0, 1] };
+  const { chartData, isLeafLevel, valueRange } = useMemo(() => {
+    if (data.length === 0) return { chartData: [], isLeafLevel: false, valueRange: [0, 1] };
 
     let groupCol;
     if (drillPath.length === 0) groupCol = 'category';
     else if (drillPath.length === 1) groupCol = 'sub_category';
     else if (drillPath.length === 2) groupCol = 'item';
-    else return { chartData: [], isLeafLevel: true, seriesKeys: [], valueRange: [0, 1] };
+    else return { chartData: [], isLeafLevel: true, valueRange: [0, 1] };
 
     const groupedByDim = {};
     const useGroupedOpco = selectedOpCo === 'All' && availableOpCos.length > 0;
@@ -244,14 +303,9 @@ const SKUDashboard = () => {
 
     rows.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
-    const keys = (selectedOpCo === 'All')
-      ? (availableOpCos.length ? availableOpCos : [])
-      : [];
-
-    // for purple gradient span (non-% metrics)
     const allVals = [];
-    if (keys.length) {
-      rows.forEach(r => keys.forEach(k => {
+    if (selectedOpCo === 'All' && availableOpCos.length > 0) {
+      rows.forEach(r => availableOpCos.forEach(k => {
         const val = Number(r[k]);
         if (Number.isFinite(val)) allVals.push(val);
       }));
@@ -264,7 +318,7 @@ const SKUDashboard = () => {
     const min = allVals.length ? Math.min(...allVals) : 0;
     const max = allVals.length ? Math.max(...allVals) : 1;
 
-    return { chartData: rows, isLeafLevel: false, seriesKeys: keys, valueRange: [min, max] };
+    return { chartData: rows, isLeafLevel: false, valueRange: [min, max] };
   }, [filteredData, drillPath, selectedMetric, data, availableMetrics, selectedOpCo, availableOpCos]);
 
   // Handlers
@@ -576,52 +630,10 @@ const SKUDashboard = () => {
                 </div>
 
                 <div className="h-96 cursor-pointer relative" onClick={handleChartClick}>
-                  {/* Overlay separators - positioned in gaps between category groups */}
-                  {selectedOpCo === 'All' && availableOpCos.length > 0 && chartData.length > 1 && (
-                    <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
-                      {[...Array(chartData.length - 1)].map((_, index) => {
-                        // Fine-tuned positioning for Recharts bar chart with grouped bars
-                        // Account for: margins (left=20, right=30) and responsive container padding
-                        const totalCategories = chartData.length;
-                        
-                        // Adjusted values based on your screenshot
-                        const chartStartPercent = 6.5; // where the first bar group starts
-                        const chartEndPercent = 94; // where the last bar group ends
-                        const chartWidthPercent = chartEndPercent - chartStartPercent;
-                        
-                        // Each category gets equal space
-                        const categoryWidthPercent = chartWidthPercent / totalCategories;
-                        
-                        // Position separator between categories
-                        const xPosition = chartStartPercent + (categoryWidthPercent * (index + 1));
-                        
-                        return (
-                          <div
-                            key={`sep-${index}`}
-                            style={{
-                              position: 'absolute',
-                              left: `${xPosition}%`,
-                              top: '44px', // Just below the chart title area
-                              height: 'calc(100% - 114px)', // Stop just above x-axis labels
-                              width: '1px',
-                              background: 'repeating-linear-gradient(to bottom, #9ca3af 0px, #9ca3af 3px, transparent 3px, transparent 6px)',
-                              opacity: 0.4,
-                              pointerEvents: 'none'
-                            }}
-                          />
-                        );
-                      })}
-                    </div>
-                  )}
-                  
+                  {/* Removed the yellow debug box and the absolute overlay div.
+                      Separators are now drawn by the SVG layer below. */}
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 70 }} barCategoryGap="20%">
-                      <defs>
-                        <pattern id="separator-pattern" patternUnits="userSpaceOnUse" width="4" height="4">
-                          <line x1="0" y1="0" x2="0" y2="4" stroke="#9ca3af" strokeWidth="1" />
-                        </pattern>
-                      </defs>
-                      
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                       <XAxis
                         dataKey="name"
@@ -650,6 +662,9 @@ const SKUDashboard = () => {
                       />
 
                       <Tooltip content={<CustomTooltip />} />
+
+                      {/* NEW: perfectly aligned vertical separators */}
+                      <SeparatorLayer categories={chartData.map((r) => r.name)} />
 
                       {/* Bars */}
                       {selectedOpCo === 'All' && availableOpCos.length > 0 ? (

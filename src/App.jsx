@@ -656,11 +656,6 @@ const SKUDashboard = () => {
                         }
                       />
 
-                      {/* separators between category groups (grouped view only) */}
-                      {selectedOpCo === 'All' && availableOpCos.length > 0 && (
-                        <Customized component={<CategorySeparators />} />
-                      )}
-
                       <Tooltip content={<CustomTooltip />} />
 
                       {/* Bars:
@@ -719,6 +714,12 @@ const SKUDashboard = () => {
                           <LabelList dataKey="value" content={renderBarLabel} />
                         </Bar>
                       )}
+
+                      {/* separators between category groups (grouped view only) */}
+                      {selectedOpCo === 'All' && availableOpCos.length > 0 && (
+                        <Customized component={<CategorySeparators />} />
+                      )}
+
                     </BarChart>
                   </ResponsiveContainer>
                 </div>

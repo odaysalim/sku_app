@@ -642,7 +642,7 @@ const SKUDashboard = () => {
 
                       {/* separators between category groups (grouped view only) */}
                       {selectedOpCo === 'All' && availableOpCos.length > 0 && (
-                        <Customized content={<CategorySeparators />} />
+                        <Customized component={<CategorySeparators />} />
                       )}
 
                       <Tooltip content={<CustomTooltip />} />

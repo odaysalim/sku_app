@@ -363,47 +363,47 @@ const SKUDashboard = () => {
   };
 
 // --------- CATEGORY SEPARATORS (between category groups in grouped bars) ---------
-  const CategorySeparators = ({ xAxisMap, offset, formattedGraphicalItems }) => {
-    if (!xAxisMap || !formattedGraphicalItems) return null;
+  const CategorySeparators = ({ xAxisMap, yAxisMap, offset }) => {
+    if (!xAxisMap) return null;
     
-    // Get the first bar series to analyze positioning
-    const firstSeries = formattedGraphicalItems?.[0];
-    if (!firstSeries?.props?.data || firstSeries.props.data.length < 2) return null;
+    // Try to get ticks from the xAxis
+    const xAxis = Object.values(xAxisMap)[0];
+    if (!xAxis || !xAxis.niceTicks || xAxis.niceTicks.length < 2) return null;
     
-    const data = firstSeries.props.data;
+    const ticks = xAxis.niceTicks;
     const top = offset.top;
     const bottom = offset.top + offset.height;
-    
     const lines = [];
     
-    // For grouped bars, find the gaps between category groups
-    for (let i = 0; i < data.length - 1; i++) {
-      const currentGroup = firstSeries.props.points?.[i];
-      const nextGroup = firstSeries.props.points?.[i + 1];
+    // The width allocated to each category
+    const width = xAxis.width;
+    const tickCount = ticks.length;
+    const categoryWidth = width / tickCount;
+    
+    // Place separators between categories
+    for (let i = 0; i < tickCount - 1; i++) {
+      // Calculate x position between categories
+      // Each category starts at offset.left + (i * categoryWidth)
+      const currentCategoryEnd = offset.left + ((i + 1) * categoryWidth);
+      const nextCategoryStart = offset.left + ((i + 1) * categoryWidth);
       
-      if (currentGroup && nextGroup) {
-        // Get the rightmost x of current group and leftmost x of next group
-        const currentRightX = currentGroup.x + currentGroup.width;
-        const nextLeftX = nextGroup.x;
-        
-        // Place separator in the middle of the gap
-        const sepX = (currentRightX + nextLeftX) / 2;
-        
-        if (Number.isFinite(sepX)) {
-          lines.push(
-            <line
-              key={`sep-${i}`}
-              x1={sepX}
-              x2={sepX}
-              y1={top}
-              y2={bottom}
-              stroke="#d1d5db"
-              strokeWidth="1"
-              strokeDasharray="2 2"
-              pointerEvents="none"
-            />
-          );
-        }
+      // Place separator between them (they meet at the same point, so just use that)
+      const sepX = currentCategoryEnd;
+      
+      if (Number.isFinite(sepX)) {
+        lines.push(
+          <line
+            key={`sep-${i}`}
+            x1={sepX}
+            x2={sepX}
+            y1={top}
+            y2={bottom}
+            stroke="#d1d5db"
+            strokeWidth="1"
+            strokeDasharray="2 2"
+            pointerEvents="none"
+          />
+        );
       }
     }
     

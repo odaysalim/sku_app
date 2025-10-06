@@ -365,24 +365,39 @@ const SKUDashboard = () => {
   };
 
   // vertical separators between category groups (grouped OpCo view)
-  const CategorySeparators = (props) => {
-    const { xAxisMap, offset, data } = props;
-    const axisKey = Object.keys(xAxisMap || {})[0];
-    const xAxis = xAxisMap?.[axisKey];
-    const scale = xAxis?.scale;
-    if (!scale || !data?.length) return null;
+  // uses bar geometry so it's reliable across setups
+  const CategorySeparators = ({ formattedGraphicalItems, offset }) => {
+    if (!formattedGraphicalItems || formattedGraphicalItems.length === 0) return null;
+
+    const firstSeries = formattedGraphicalItems[0];
+    const pointsLen = firstSeries?.props?.points?.length || 0;
+    if (!pointsLen) return null;
+
+    const groupBounds = [];
+    for (let i = 0; i < pointsLen; i++) {
+      let left = Infinity;
+      let right = -Infinity;
+      for (const series of formattedGraphicalItems) {
+        const pt = series?.props?.points?.[i];
+        if (!pt || !Number.isFinite(pt.x)) continue;
+        const l = pt.x;
+        const r = pt.x + (pt.width || 0);
+        if (l < left) left = l;
+        if (r > right) right = r;
+      }
+      if (Number.isFinite(left) && Number.isFinite(right)) {
+        groupBounds.push({ left, right });
+      }
+    }
+
+    if (groupBounds.length < 2) return null;
 
     const top = offset.top;
     const bottom = offset.top + offset.height;
 
     const lines = [];
-    for (let i = 0; i < data.length - 1; i++) {
-      const curr = scale(data[i].name);
-      const next = scale(data[i + 1].name);
-      if (curr == null || next == null) continue;
-      const bw = typeof scale.bandwidth === 'function' ? scale.bandwidth() : 0;
-      // separator halfway between bands
-      const sepX = (curr + bw + next) / 2;
+    for (let i = 0; i < groupBounds.length - 1; i++) {
+      const sepX = (groupBounds[i].right + groupBounds[i + 1].left) / 2;
       lines.push(
         <line
           key={`sep-${i}`}
@@ -390,12 +405,13 @@ const SKUDashboard = () => {
           x2={sepX}
           y1={top}
           y2={bottom}
-          stroke="#d1d5db"          // gray-300
+          stroke="#d1d5db"      // gray-300
           strokeWidth="1"
           strokeDasharray="2 2"
         />
       );
     }
+
     return <g>{lines}</g>;
   };
 

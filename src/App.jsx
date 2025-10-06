@@ -8,6 +8,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   LabelList,
+  Cell
 } from 'recharts';
 import { ChevronRight, Home, ArrowLeft, Upload, BarChart3 } from 'lucide-react';
 import Papa from "papaparse";
@@ -15,7 +16,7 @@ import Papa from "papaparse";
 const SKUDashboard = () => {
   const [data, setData] = useState([]);
   const [drillPath, setDrillPath] = useState([]);
-  const [selectedMetric, setSelectedMetric] = useState('Margin %'); // default intent
+  const [selectedMetric, setSelectedMetric] = useState('Margin %'); // default measure
   const [selectedOpCo, setSelectedOpCo] = useState('All');
   const [availableOpCos, setAvailableOpCos] = useState([]);
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
@@ -65,13 +66,28 @@ const SKUDashboard = () => {
     const isPct = /%/i.test(metricName) || /margin\s*%/i.test(metricName);
     if (isPct) {
       const num = Number(val);
-      return Number.isFinite(num) ? `${num.toFixed(1)}%` : '0.0%';
+      if (!Number.isFinite(num)) return '';
+      return `${num.toFixed(1)}%`;
     }
+    if (!Number.isFinite(Number(val))) return '';
     return compactNumber(val);
   };
 
   const formatMetricValue = (val) =>
-    selectedMetric === 'Margin %' ? `${Number(val).toFixed(1)}%` : compactNumber(val);
+    selectedMetric === 'Margin %'
+      ? (Number.isFinite(Number(val)) ? `${Number(val).toFixed(1)}%` : '')
+      : (Number.isFinite(Number(val)) ? compactNumber(val) : '');
+
+  // colors (restored)
+  const marginColor = (v) => (v > 0 ? '#16a34a' : v < 0 ? '#dc2626' : '#9ca3af'); // green / red / grey
+  const purpleShade = (t) => {
+    const clamp = (x) => Math.max(0, Math.min(1, x));
+    const lerp = (a, b, p) => Math.round(a + (b - a) * clamp(p));
+    const from = { r: 237, g: 233, b: 254 };
+    const to = { r: 91, g: 33, b: 182 };
+    const p = clamp(t);
+    return `rgb(${lerp(from.r, to.r, p)}, ${lerp(from.g, to.g, p)}, ${lerp(from.b, to.b, p)})`;
+  };
 
   // ---------- CSV/TSV upload ----------
   const handleFileUpload = async (event) => {
@@ -148,7 +164,6 @@ const SKUDashboard = () => {
           setData(normalized);
           setAvailableMetrics(metrics.length ? metrics : ['Margin', 'Revenue', 'Cost', 'No of Transactions']);
           setAvailableOpCos(uniqueOpCos);
-          // Default to Margin %
           if (metrics.includes('Margin %')) setSelectedMetric('Margin %');
           else if (metrics.includes('Margin')) setSelectedMetric('Margin');
           else if (metrics.length > 0) setSelectedMetric(metrics[0]);
@@ -176,14 +191,14 @@ const SKUDashboard = () => {
   }, [data, drillPath, selectedOpCo]);
 
   // Build chart data (grouped by OpCo when "All" is selected)
-  const { chartData, isLeafLevel, seriesKeys } = useMemo(() => {
-    if (data.length === 0) return { chartData: [], isLeafLevel: false, seriesKeys: [] };
+  const { chartData, isLeafLevel, seriesKeys, valueRange } = useMemo(() => {
+    if (data.length === 0) return { chartData: [], isLeafLevel: false, seriesKeys: [], valueRange: [0, 1] };
 
     let groupCol;
     if (drillPath.length === 0) groupCol = 'category';
     else if (drillPath.length === 1) groupCol = 'sub_category';
     else if (drillPath.length === 2) groupCol = 'item';
-    else return { chartData: [], isLeafLevel: true, seriesKeys: [] };
+    else return { chartData: [], isLeafLevel: true, seriesKeys: [], valueRange: [0, 1] };
 
     const groupedByDim = {};
     const useGroupedOpco = selectedOpCo === 'All' && availableOpCos.length > 0;
@@ -197,7 +212,6 @@ const SKUDashboard = () => {
       }
       const bucket = groupedByDim[dim][opcoKey];
 
-      // sum numeric metrics (except derived %)
       availableMetrics
         .filter((m) => m !== 'Margin %')
         .forEach((m) => {
@@ -209,13 +223,12 @@ const SKUDashboard = () => {
       bucket.revenueSum += getNum(row, ['Revenue', 'revenue']);
     });
 
-    // pivot -> one object per dimension, with keys per series (opco)
     const rows = Object.entries(groupedByDim).map(([dim, opcoMap]) => {
       const obj = { name: dim, __byOpCo: {} };
       Object.entries(opcoMap).forEach(([opcoKey, agg]) => {
         const metricsMap = { ...agg.sums };
-        metricsMap['Margin %'] = agg.revenueSum > 0 ? (agg.marginSum / agg.revenueSum) * 100 : 0;
-        const plotted = metricsMap[selectedMetric] ?? 0;
+        metricsMap['Margin %'] = agg.revenueSum > 0 ? (agg.marginSum / agg.revenueSum) * 100 : NaN;
+        const plotted = metricsMap[selectedMetric];
 
         if (useGroupedOpco) {
           obj[opcoKey] = plotted;
@@ -228,15 +241,29 @@ const SKUDashboard = () => {
       return obj;
     });
 
-    // sort by name
     rows.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
-    // dynamic series keys
     const keys = (selectedOpCo === 'All')
       ? (availableOpCos.length ? availableOpCos : [])
       : [];
 
-    return { chartData: rows, isLeafLevel: false, seriesKeys: keys };
+    // for purple gradient span (non-% metrics)
+    const allVals = [];
+    if (keys.length) {
+      rows.forEach(r => keys.forEach(k => {
+        const val = Number(r[k]);
+        if (Number.isFinite(val)) allVals.push(val);
+      }));
+    } else {
+      rows.forEach(r => {
+        const val = Number(r.value);
+        if (Number.isFinite(val)) allVals.push(val);
+      });
+    }
+    const min = allVals.length ? Math.min(...allVals) : 0;
+    const max = allVals.length ? Math.max(...allVals) : 1;
+
+    return { chartData: rows, isLeafLevel: false, seriesKeys: keys, valueRange: [min, max] };
   }, [filteredData, drillPath, selectedMetric, data, availableMetrics, selectedOpCo, availableOpCos]);
 
   // Handlers
@@ -272,15 +299,20 @@ const SKUDashboard = () => {
         const aR = getNum(a, ['Revenue', 'revenue']);
         const bM = getNum(b, ['Margin', 'margin']);
         const bR = getNum(b, ['Revenue', 'revenue']);
-        aVal = aR > 0 ? (aM / aR) * 100 : 0;
-        bVal = bR > 0 ? (bM / bR) * 100 : 0;
+        aVal = aR > 0 ? (aM / aR) * 100 : NaN;
+        bVal = bR > 0 ? (bM / bR) * 100 : NaN;
       } else if (typeof aVal === 'number' && typeof bVal === 'number') {
-        aVal = Number(aVal) || 0;
-        bVal = Number(bVal) || 0;
+        aVal = Number(aVal);
+        bVal = Number(bVal);
       } else {
         aVal = String(aVal || '').toLowerCase();
         bVal = String(bVal || '').toLowerCase();
       }
+
+      // Treat NaN as smallest
+      if (!Number.isFinite(aVal) && !Number.isFinite(bVal)) return 0;
+      if (!Number.isFinite(aVal)) return sortConfig.direction === 'asc' ? -1 : 1;
+      if (!Number.isFinite(bVal)) return sortConfig.direction === 'asc' ? 1 : -1;
 
       if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
       if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
@@ -292,8 +324,9 @@ const SKUDashboard = () => {
 
   const breadcrumbs = ['All Categories', ...drillPath];
 
-  // label renderer
+  // label renderer (hide NaN)
   const renderBarLabel = ({ x, y, width, height, value }) => {
+    if (!Number.isFinite(Number(value))) return null;
     const isNeg = Number(value) < 0;
     const cx = x + width / 2;
 
@@ -339,7 +372,7 @@ const SKUDashboard = () => {
             <div key={op} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
               <span style={{ color: '#6b7280' }}>{op}</span>
               <span style={{ color: '#111827' }}>
-                {formatSpecific(selectedMetric, (row.__byOpCo[op]?.[selectedMetric]) ?? 0)}
+                {formatSpecific(selectedMetric, row.__byOpCo[op]?.[selectedMetric])}
               </span>
             </div>
           ))}
@@ -365,7 +398,7 @@ const SKUDashboard = () => {
           <div key={m} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
             <span style={{ color: '#6b7280' }}>{m}</span>
             <span style={{ color: '#111827' }}>
-              {formatSpecific(m, metricsMap[m] ?? 0)}
+              {formatSpecific(m, metricsMap[m])}
             </span>
           </div>
         ))}
@@ -535,15 +568,26 @@ const SKUDashboard = () => {
                         height={80}
                         interval={0}
                       />
+                      {/* OpCo label row when grouped */}
+                      {selectedOpCo === 'All' && availableOpCos.length > 0 && (
+                        <XAxis
+                          dataKey="opco"
+                          xAxisId="opco"
+                          tick={{ fontSize: 11, fill: '#6b7280' }}
+                          height={20}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                      )}
                       <YAxis
                         tick={{ fontSize: 12 }}
                         tickFormatter={(v) =>
                           selectedMetric === 'Margin %'
                             ? (() => {
                                 const n = Number(v);
-                                return Number.isFinite(n) ? `${n.toFixed(1)}%` : '0.0%';
+                                return Number.isFinite(n) ? `${n.toFixed(1)}%` : '';
                               })()
-                            : compactNumber(v)
+                            : (Number.isFinite(Number(v)) ? compactNumber(v) : '')
                         }
                         padding={{ top: 20, bottom: 28 }}
                         domain={
@@ -555,12 +599,12 @@ const SKUDashboard = () => {
                       <Tooltip content={<CustomTooltip />} />
 
                       {/* Bars:
-                          - If "All" OpCos => side-by-side bars per OpCo
-                          - Else           => single series using "value"
+                          - If "All" OpCos => side-by-side bars per OpCo with per-bar colors
+                          - Else           => single series using "value" with colors
                       */}
                       {selectedOpCo === 'All' && availableOpCos.length > 0 ? (
                         <>
-                          {availableOpCos.map((opco, idx) => (
+                          {availableOpCos.map((opco) => (
                             <Bar
                               key={opco}
                               dataKey={opco}
@@ -569,12 +613,43 @@ const SKUDashboard = () => {
                               cursor="pointer"
                               onClick={(d) => handleBarClick(d)}
                             >
+                              {chartData.map((row, i) => {
+                                const val = Number(row[opco]);
+                                let fill = '#9ca3af';
+                                if (selectedMetric === 'Margin %') {
+                                  fill = marginColor(val);
+                                } else {
+                                  const [min, max] = valueRange;
+                                  const span = (max - min) || 1;
+                                  const t = Number.isFinite(val) ? (val - min) / span : 0;
+                                  fill = purpleShade(t);
+                                }
+                                return <Cell key={`${opco}-${i}`} fill={fill} />;
+                              })}
                               <LabelList dataKey={opco} content={renderBarLabel} />
                             </Bar>
                           ))}
                         </>
                       ) : (
-                        <Bar dataKey="value" radius={[4, 4, 0, 0]} cursor="pointer" onClick={handleBarClick}>
+                        <Bar
+                          dataKey="value"
+                          radius={[4, 4, 0, 0]}
+                          cursor="pointer"
+                          onClick={handleBarClick}
+                        >
+                          {chartData.map((row, i) => {
+                            const val = Number(row.value);
+                            let fill = '#9ca3af';
+                            if (selectedMetric === 'Margin %') {
+                              fill = marginColor(val);
+                            } else {
+                              const [min, max] = valueRange;
+                              const span = (max - min) || 1;
+                              const t = Number.isFinite(val) ? (val - min) / span : 0;
+                              fill = purpleShade(t);
+                            }
+                            return <Cell key={`single-${i}`} fill={fill} />;
+                          })}
                           <LabelList dataKey="value" content={renderBarLabel} />
                         </Bar>
                       )}
@@ -647,10 +722,10 @@ const SKUDashboard = () => {
                                 ? (() => {
                                     const m = getNum(row, ['Margin', 'margin']);
                                     const r = getNum(row, ['Revenue', 'revenue']);
-                                    const pct = r > 0 ? (m / r) * 100 : 0;
-                                    return `${pct.toFixed(1)}%`;
+                                    const pct = r > 0 ? (m / r) * 100 : NaN;
+                                    return Number.isFinite(pct) ? `${pct.toFixed(1)}%` : '';
                                   })()
-                                : compactNumber(row[metric])}
+                                : (Number.isFinite(Number(row[metric])) ? compactNumber(row[metric]) : '')}
                             </td>
                           ))}
                         </tr>

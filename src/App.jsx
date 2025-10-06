@@ -576,34 +576,36 @@ const SKUDashboard = () => {
                 </div>
 
                 <div className="h-96 cursor-pointer relative" onClick={handleChartClick}>
-                  {/* Debug info box */}
-                  {selectedOpCo === 'All' && availableOpCos.length > 0 && (
-                    <div className="bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-2 mb-2 rounded">
-                      Debug: Grouped view active | Categories: {chartData.length} | OpCos: {availableOpCos.join(', ')}
-                    </div>
-                  )}
-                  
-                  {/* Overlay separators */}
+                  {/* Overlay separators - positioned in gaps between category groups */}
                   {selectedOpCo === 'All' && availableOpCos.length > 0 && chartData.length > 1 && (
                     <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
                       {[...Array(chartData.length - 1)].map((_, index) => {
-                        // Calculate approximate position based on chart layout
-                        // Margins: left=20, right=30, top=20, bottom=70
-                        const totalWidth = 100; // percentage
-                        const leftMargin = 2.5; // approximate %
-                        const rightMargin = 3.75; // approximate %
-                        const chartWidth = totalWidth - leftMargin - rightMargin;
-                        const categoryWidth = chartWidth / chartData.length;
-                        const xPosition = leftMargin + (categoryWidth * (index + 1));
+                        // Fine-tuned positioning for Recharts bar chart with grouped bars
+                        // Account for: margins (left=20, right=30) and responsive container padding
+                        const totalCategories = chartData.length;
+                        
+                        // Adjusted values based on your screenshot
+                        const chartStartPercent = 6.5; // where the first bar group starts
+                        const chartEndPercent = 94; // where the last bar group ends
+                        const chartWidthPercent = chartEndPercent - chartStartPercent;
+                        
+                        // Each category gets equal space
+                        const categoryWidthPercent = chartWidthPercent / totalCategories;
+                        
+                        // Position separator between categories
+                        const xPosition = chartStartPercent + (categoryWidthPercent * (index + 1));
                         
                         return (
                           <div
                             key={`sep-${index}`}
-                            className="absolute border-l-2 border-dashed border-gray-400"
                             style={{
+                              position: 'absolute',
                               left: `${xPosition}%`,
-                              top: '20px',
-                              height: 'calc(100% - 90px)',
+                              top: '44px', // Just below the chart title area
+                              height: 'calc(100% - 114px)', // Stop just above x-axis labels
+                              width: '1px',
+                              background: 'repeating-linear-gradient(to bottom, #9ca3af 0px, #9ca3af 3px, transparent 3px, transparent 6px)',
+                              opacity: 0.4,
                               pointerEvents: 'none'
                             }}
                           />

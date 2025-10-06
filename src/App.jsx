@@ -541,7 +541,7 @@ const SKUDashboard = () => {
                           selectedMetric === 'Margin %'
                             ? (() => {
                                 const n = Number(v);
-                                return Number.isFinite(n) ? `${n.toFixed(1)}%` : '0.0%`;
+                                return Number.isFinite(n) ? `${n.toFixed(1)}%` : '0.0%';
                               })()
                             : compactNumber(v)
                         }

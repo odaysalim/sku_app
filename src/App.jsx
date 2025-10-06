@@ -309,7 +309,6 @@ const SKUDashboard = () => {
         bVal = String(bVal || '').toLowerCase();
       }
 
-      // Treat NaN as smallest
       if (!Number.isFinite(aVal) && !Number.isFinite(bVal)) return 0;
       if (!Number.isFinite(aVal)) return sortConfig.direction === 'asc' ? -1 : 1;
       if (!Number.isFinite(bVal)) return sortConfig.direction === 'asc' ? 1 : -1;
@@ -324,7 +323,7 @@ const SKUDashboard = () => {
 
   const breadcrumbs = ['All Categories', ...drillPath];
 
-  // label renderer (hide NaN)
+  // label renderer (value; hide NaN)
   const renderBarLabel = ({ x, y, width, height, value }) => {
     if (!Number.isFinite(Number(value))) return null;
     const isNeg = Number(value) < 0;
@@ -351,12 +350,24 @@ const SKUDashboard = () => {
     );
   };
 
-  // tooltip
+  // NEW: small OpCo tag under each grouped bar
+  const makeOpcoTag = (opco) => (props) => {
+    const { x, y, width, height, value } = props;
+    if (!Number.isFinite(Number(value))) return null;
+    const cx = x + width / 2;
+    const ty = y + height + 14; // under bar
+    return (
+      <text x={cx} y={ty} textAnchor="middle" fontSize={10} fill="#6b7280">
+        {opco}
+      </text>
+    );
+  };
+
+  // tooltip (grouped view now shows OpCo then ALL metrics)
   const CustomTooltip = ({ active, payload, label }) => {
     if (!active || !payload || !payload.length) return null;
     const row = payload[0].payload;
 
-    // grouped mode: show selected metric per OpCo
     if (row.__byOpCo) {
       return (
         <div style={{
@@ -365,17 +376,25 @@ const SKUDashboard = () => {
           borderRadius: 8,
           padding: '10px 12px',
           boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)',
-          maxWidth: 260,
+          maxWidth: 280,
         }}>
           <div style={{ fontWeight: 600, marginBottom: 6 }}>{label}</div>
-          {availableOpCos.map((op) => (
-            <div key={op} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-              <span style={{ color: '#6b7280' }}>{op}</span>
-              <span style={{ color: '#111827' }}>
-                {formatSpecific(selectedMetric, row.__byOpCo[op]?.[selectedMetric])}
-              </span>
-            </div>
-          ))}
+          {availableOpCos.map((op) => {
+            const metricsMap = row.__byOpCo[op] || {};
+            return (
+              <div key={op} style={{ marginBottom: 6 }}>
+                <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 4 }}>{op}</div>
+                {availableMetrics.map((m) => (
+                  <div key={`${op}-${m}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                    <span style={{ color: '#6b7280' }}>{m}</span>
+                    <span style={{ color: '#111827' }}>
+                      {formatSpecific(m, metricsMap[m])}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
         </div>
       );
     }
@@ -558,27 +577,16 @@ const SKUDashboard = () => {
 
                 <div className="h-96 cursor-pointer" onClick={handleChartClick}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+                    <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 70 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                       <XAxis
                         dataKey="name"
                         tick={{ fontSize: 12 }}
                         angle={-45}
                         textAnchor="end"
-                        height={80}
+                        height={90}
                         interval={0}
                       />
-                      {/* OpCo label row when grouped */}
-                      {selectedOpCo === 'All' && availableOpCos.length > 0 && (
-                        <XAxis
-                          dataKey="opco"
-                          xAxisId="opco"
-                          tick={{ fontSize: 11, fill: '#6b7280' }}
-                          height={20}
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                      )}
                       <YAxis
                         tick={{ fontSize: 12 }}
                         tickFormatter={(v) =>
@@ -599,7 +607,7 @@ const SKUDashboard = () => {
                       <Tooltip content={<CustomTooltip />} />
 
                       {/* Bars:
-                          - If "All" OpCos => side-by-side bars per OpCo with per-bar colors
+                          - If "All" OpCos => side-by-side bars per OpCo with per-bar colors + opco tag
                           - Else           => single series using "value" with colors
                       */}
                       {selectedOpCo === 'All' && availableOpCos.length > 0 ? (
@@ -627,6 +635,7 @@ const SKUDashboard = () => {
                                 return <Cell key={`${opco}-${i}`} fill={fill} />;
                               })}
                               <LabelList dataKey={opco} content={renderBarLabel} />
+                              <LabelList dataKey={opco} content={makeOpcoTag(opco)} />
                             </Bar>
                           ))}
                         </>

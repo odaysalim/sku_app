@@ -80,7 +80,7 @@ const SKUDashboard = () => {
       : (Number.isFinite(Number(val)) ? compactNumber(val) : '');
 
   // colors (restored)
-  const marginColor = (v) => (v > 0 ? '#16a34a' : v < 0 ? '#dc2626' : '#9ca3af'); // green / red / grey
+  const marginColor = (v) => (v > 0 ? '#16a34a' : v < 0 ? '#dc2626' : '#9ca3af');
   const purpleShade = (t) => {
     const clamp = (x) => Math.max(0, Math.min(1, x));
     const lerp = (a, b, p) => Math.round(a + (b - a) * clamp(p));
@@ -122,7 +122,7 @@ const SKUDashboard = () => {
                 else if (nk === 'item') out.item = val;
                 else if (nk === 'skucode') out.sku_code = (val || '').trim();
                 else if (nk === 'skudescription') out.sku_description = val;
-                else if (nk === 'opco') out.opco = val; // NEW
+                else if (nk === 'opco') out.opco = val;
               }
 
               const measureNames = [
@@ -356,7 +356,7 @@ const SKUDashboard = () => {
     const { x, y, width, height, value } = props;
     if (!Number.isFinite(Number(value))) return null;
     const cx = x + width / 2;
-    const ty = y + height + 14; // under bar
+    const ty = y + height + 14;
     return (
       <text x={cx} y={ty} textAnchor="middle" fontSize={10} fill="#6b7280">
         {opco}
@@ -364,40 +364,23 @@ const SKUDashboard = () => {
     );
   };
 
-  // vertical separators between category groups (grouped OpCo view)
-  // uses bar geometry so it's reliable across setups
-  const CategorySeparators = ({ formattedGraphicalItems, offset }) => {
-    if (!formattedGraphicalItems || formattedGraphicalItems.length === 0) return null;
-
-    const firstSeries = formattedGraphicalItems[0];
-    const pointsLen = firstSeries?.props?.points?.length || 0;
-    if (!pointsLen) return null;
-
-    const groupBounds = [];
-    for (let i = 0; i < pointsLen; i++) {
-      let left = Infinity;
-      let right = -Infinity;
-      for (const series of formattedGraphicalItems) {
-        const pt = series?.props?.points?.[i];
-        if (!pt || !Number.isFinite(pt.x)) continue;
-        const l = pt.x;
-        const r = pt.x + (pt.width || 0);
-        if (l < left) left = l;
-        if (r > right) right = r;
-      }
-      if (Number.isFinite(left) && Number.isFinite(right)) {
-        groupBounds.push({ left, right });
-      }
-    }
-
-    if (groupBounds.length < 2) return null;
+  // --------- CATEGORY SEPARATORS (tick-based; one line between category groups) ---------
+  const CategorySeparators = ({ xAxisMap, offset }) => {
+    if (!xAxisMap) return null;
+    const axes = Object.values(xAxisMap);
+    const catAxis = axes.find(a => a?.props?.dataKey === 'name') || axes[0];
+    const ticks = catAxis?.ticks;
+    if (!ticks || ticks.length < 2) return null;
 
     const top = offset.top;
     const bottom = offset.top + offset.height;
 
     const lines = [];
-    for (let i = 0; i < groupBounds.length - 1; i++) {
-      const sepX = (groupBounds[i].right + groupBounds[i + 1].left) / 2;
+    for (let i = 0; i < ticks.length - 1; i++) {
+      const curr = Number(ticks[i].coord);
+      const next = Number(ticks[i + 1].coord);
+      if (!Number.isFinite(curr) || !Number.isFinite(next)) continue;
+      const sepX = (curr + next) / 2;
       lines.push(
         <line
           key={`sep-${i}`}
@@ -405,17 +388,17 @@ const SKUDashboard = () => {
           x2={sepX}
           y1={top}
           y2={bottom}
-          stroke="#d1d5db"      // gray-300
+          stroke="#d1d5db"
           strokeWidth="1"
           strokeDasharray="2 2"
+          pointerEvents="none"
         />
       );
     }
-
     return <g>{lines}</g>;
   };
 
-  // tooltip (grouped view shows OpCo then ALL metrics; single view shows ALL metrics)
+  // tooltip
   const CustomTooltip = ({ active, payload, label }) => {
     if (!active || !payload || !payload.length) return null;
     const row = payload[0].payload;
@@ -658,10 +641,7 @@ const SKUDashboard = () => {
 
                       <Tooltip content={<CustomTooltip />} />
 
-                      {/* Bars:
-                          - If "All" OpCos => side-by-side bars per OpCo with per-bar colors + opco tag
-                          - Else           => single series using "value" with colors
-                      */}
+                      {/* Bars */}
                       {selectedOpCo === 'All' && availableOpCos.length > 0 ? (
                         <>
                           {availableOpCos.map((opco) => (
@@ -719,7 +699,6 @@ const SKUDashboard = () => {
                       {selectedOpCo === 'All' && availableOpCos.length > 0 && (
                         <Customized component={<CategorySeparators />} />
                       )}
-
                     </BarChart>
                   </ResponsiveContainer>
                 </div>

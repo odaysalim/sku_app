@@ -362,44 +362,51 @@ const SKUDashboard = () => {
     );
   };
 
-  // --------- CATEGORY SEPARATORS ---------
-  const CategorySeparators = ({ xAxisMap, offset }) => {
-    if (!xAxisMap || !offset) return null;
-
-    const axis = Object.values(xAxisMap)[0];
-    if (!axis || !axis.ticks || axis.ticks.length < 2) {
-      // This was the error condition. The fix in XAxis should prevent this.
-      return null;
-    }
-
-    const { ticks } = axis;
+// --------- CATEGORY SEPARATORS (between category groups in grouped bars) ---------
+  const CategorySeparators = ({ xAxisMap, offset, formattedGraphicalItems }) => {
+    if (!xAxisMap || !formattedGraphicalItems) return null;
+    
+    // Get the first bar series to analyze positioning
+    const firstSeries = formattedGraphicalItems?.[0];
+    if (!firstSeries?.props?.data || firstSeries.props.data.length < 2) return null;
+    
+    const data = firstSeries.props.data;
     const top = offset.top;
     const bottom = offset.top + offset.height;
     
-    const getCoord = (tick) => tick.coordinate ?? tick.coord;
-
     const lines = [];
-    for (let i = 0; i < ticks.length - 1; i++) {
-      const curr = Number(getCoord(ticks[i]));
-      const next = Number(getCoord(ticks[i + 1]));
-
-      if (Number.isFinite(curr) && Number.isFinite(next)) {
-        const sepX = (curr + next) / 2;
-        lines.push(
-          <line
-            key={`sep-${i}`}
-            x1={sepX}
-            x2={sepX}
-            y1={top}
-            y2={bottom}
-            stroke="#d1d5db"
-            strokeWidth="1"
-            strokeDasharray="4 4"
-            pointerEvents="none"
-          />
-        );
+    
+    // For grouped bars, find the gaps between category groups
+    for (let i = 0; i < data.length - 1; i++) {
+      const currentGroup = firstSeries.props.points?.[i];
+      const nextGroup = firstSeries.props.points?.[i + 1];
+      
+      if (currentGroup && nextGroup) {
+        // Get the rightmost x of current group and leftmost x of next group
+        const currentRightX = currentGroup.x + currentGroup.width;
+        const nextLeftX = nextGroup.x;
+        
+        // Place separator in the middle of the gap
+        const sepX = (currentRightX + nextLeftX) / 2;
+        
+        if (Number.isFinite(sepX)) {
+          lines.push(
+            <line
+              key={`sep-${i}`}
+              x1={sepX}
+              x2={sepX}
+              y1={top}
+              y2={bottom}
+              stroke="#d1d5db"
+              strokeWidth="1"
+              strokeDasharray="2 2"
+              pointerEvents="none"
+            />
+          );
+        }
       }
     }
+    
     return <g>{lines}</g>;
   };
 

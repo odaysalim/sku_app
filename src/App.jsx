@@ -8,7 +8,8 @@ import {
   Tooltip,
   ResponsiveContainer,
   LabelList,
-  Cell
+  Cell,
+  Customized
 } from 'recharts';
 import { ChevronRight, Home, ArrowLeft, Upload, BarChart3 } from 'lucide-react';
 import Papa from "papaparse";
@@ -350,7 +351,7 @@ const SKUDashboard = () => {
     );
   };
 
-  // NEW: small OpCo tag under each grouped bar
+  // small OpCo tag under each grouped bar
   const makeOpcoTag = (opco) => (props) => {
     const { x, y, width, height, value } = props;
     if (!Number.isFinite(Number(value))) return null;
@@ -363,7 +364,42 @@ const SKUDashboard = () => {
     );
   };
 
-  // tooltip (grouped view now shows OpCo then ALL metrics)
+  // vertical separators between category groups (grouped OpCo view)
+  const CategorySeparators = (props) => {
+    const { xAxisMap, offset, data } = props;
+    const axisKey = Object.keys(xAxisMap || {})[0];
+    const xAxis = xAxisMap?.[axisKey];
+    const scale = xAxis?.scale;
+    if (!scale || !data?.length) return null;
+
+    const top = offset.top;
+    const bottom = offset.top + offset.height;
+
+    const lines = [];
+    for (let i = 0; i < data.length - 1; i++) {
+      const curr = scale(data[i].name);
+      const next = scale(data[i + 1].name);
+      if (curr == null || next == null) continue;
+      const bw = typeof scale.bandwidth === 'function' ? scale.bandwidth() : 0;
+      // separator halfway between bands
+      const sepX = (curr + bw + next) / 2;
+      lines.push(
+        <line
+          key={`sep-${i}`}
+          x1={sepX}
+          x2={sepX}
+          y1={top}
+          y2={bottom}
+          stroke="#d1d5db"          // gray-300
+          strokeWidth="1"
+          strokeDasharray="2 2"
+        />
+      );
+    }
+    return <g>{lines}</g>;
+  };
+
+  // tooltip (grouped view shows OpCo then ALL metrics; single view shows ALL metrics)
   const CustomTooltip = ({ active, payload, label }) => {
     if (!active || !payload || !payload.length) return null;
     const row = payload[0].payload;
@@ -399,7 +435,6 @@ const SKUDashboard = () => {
       );
     }
 
-    // single-series mode: show all measures
     const metricsMap = row.__metrics || {};
     const order = availableMetrics;
 
@@ -604,6 +639,12 @@ const SKUDashboard = () => {
                             : ['auto', 'auto']
                         }
                       />
+
+                      {/* separators between category groups (grouped view only) */}
+                      {selectedOpCo === 'All' && availableOpCos.length > 0 && (
+                        <Customized content={<CategorySeparators />} />
+                      )}
+
                       <Tooltip content={<CustomTooltip />} />
 
                       {/* Bars:

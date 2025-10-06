@@ -322,8 +322,6 @@ const SKUDashboard = () => {
     return sorted;
   }, [filteredData, sortConfig]);
 
-  const breadcrumbs = ['All Categories', ...drillPath];
-
   // label renderer (value; hide NaN)
   const renderBarLabel = ({ x, y, width, height, value }) => {
     if (!Number.isFinite(Number(value))) return null;
@@ -364,30 +362,41 @@ const SKUDashboard = () => {
     );
   };
 
-  // --------- CATEGORY SEPARATORS (ROBUST VERSION) ---------
+  // --------- CATEGORY SEPARATORS (DEBUGGING VERSION) ---------
   const CategorySeparators = ({ xAxisMap, offset }) => {
-    if (!xAxisMap || !offset) return null;
+    // Basic check for the props themselves
+    if (!xAxisMap || !offset) {
+      return <text x={10} y={20} fill="red">DEBUG: Separator component received no xAxisMap or offset.</text>;
+    }
 
     const axis = Object.values(xAxisMap)[0];
-    if (!axis || !axis.ticks || axis.ticks.length < 2) {
-      return null;
+    if (!axis) {
+      return <text x={10} y={20} fill="red">DEBUG: No axis found in xAxisMap.</text>;
+    }
+
+    if (!axis.ticks || axis.ticks.length < 2) {
+      return <text x={10} y={20} fill="red">DEBUG: Found axis, but it has fewer than 2 ticks.</text>;
     }
 
     const { ticks } = axis;
     const top = offset.top;
     const bottom = offset.top + offset.height;
 
-    // Helper to safely get the coordinate regardless of the property name
     const getCoord = (tick) => tick.coordinate ?? tick.coord;
+
+    // Check if the ticks have valid coordinate data
+    const firstTickCoord = getCoord(ticks[0]);
+    if (typeof firstTickCoord === 'undefined') {
+        const properties = Object.keys(ticks[0] || {}).join(', ');
+        return <text x={10} y={20} fill="red" fontSize="12">
+            DEBUG: Ticks are missing 'coordinate' or 'coord'. Available properties: {properties}
+        </text>;
+    }
 
     const lines = [];
     for (let i = 0; i < ticks.length - 1; i++) {
-      const currTick = ticks[i];
-      const nextTick = ticks[i + 1];
-
-      // Use the helper to get the coordinate value
-      const curr = Number(getCoord(currTick));
-      const next = Number(getCoord(nextTick));
+      const curr = Number(getCoord(ticks[i]));
+      const next = Number(getCoord(ticks[i + 1]));
 
       if (Number.isFinite(curr) && Number.isFinite(next)) {
         const sepX = (curr + next) / 2;
@@ -398,14 +407,20 @@ const SKUDashboard = () => {
             x2={sepX}
             y1={top}
             y2={bottom}
-            stroke="#e5e7eb"
+            stroke="#d1d5db"
             strokeWidth="1"
-            strokeDasharray="3 3"
+            strokeDasharray="4 4"
             pointerEvents="none"
           />
         );
       }
     }
+
+    // If lines array is empty after the loop, it means something was wrong with the coords
+    if (lines.length === 0) {
+        return <text x={10} y={20} fill="red">DEBUG: Ticks found, but failed to calculate line positions.</text>
+    }
+
     return <g>{lines}</g>;
   };
 

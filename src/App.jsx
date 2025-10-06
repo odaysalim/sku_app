@@ -9,7 +9,7 @@ import {
   ResponsiveContainer,
   LabelList,
   Cell,
-  Customized
+  ReferenceLine
 } from 'recharts';
 import { ChevronRight, Home, ArrowLeft, Upload, BarChart3 } from 'lucide-react';
 import Papa from "papaparse";
@@ -322,6 +322,8 @@ const SKUDashboard = () => {
     return sorted;
   }, [filteredData, sortConfig]);
 
+  const breadcrumbs = ['All Categories', ...drillPath];
+
   // label renderer (value; hide NaN)
   const renderBarLabel = ({ x, y, width, height, value }) => {
     if (!Number.isFinite(Number(value))) return null;
@@ -360,54 +362,6 @@ const SKUDashboard = () => {
         {opco}
       </text>
     );
-  };
-
-// --------- CATEGORY SEPARATORS (between category groups in grouped bars) ---------
-  const CategorySeparators = ({ xAxisMap, yAxisMap, offset }) => {
-    if (!xAxisMap) return null;
-    
-    // Try to get ticks from the xAxis
-    const xAxis = Object.values(xAxisMap)[0];
-    if (!xAxis || !xAxis.niceTicks || xAxis.niceTicks.length < 2) return null;
-    
-    const ticks = xAxis.niceTicks;
-    const top = offset.top;
-    const bottom = offset.top + offset.height;
-    const lines = [];
-    
-    // The width allocated to each category
-    const width = xAxis.width;
-    const tickCount = ticks.length;
-    const categoryWidth = width / tickCount;
-    
-    // Place separators between categories
-    for (let i = 0; i < tickCount - 1; i++) {
-      // Calculate x position between categories
-      // Each category starts at offset.left + (i * categoryWidth)
-      const currentCategoryEnd = offset.left + ((i + 1) * categoryWidth);
-      const nextCategoryStart = offset.left + ((i + 1) * categoryWidth);
-      
-      // Place separator between them (they meet at the same point, so just use that)
-      const sepX = currentCategoryEnd;
-      
-      if (Number.isFinite(sepX)) {
-        lines.push(
-          <line
-            key={`sep-${i}`}
-            x1={sepX}
-            x2={sepX}
-            y1={top}
-            y2={bottom}
-            stroke="#d1d5db"
-            strokeWidth="1"
-            strokeDasharray="2 2"
-            pointerEvents="none"
-          />
-        );
-      }
-    }
-    
-    return <g>{lines}</g>;
   };
 
   // tooltip
@@ -621,9 +575,51 @@ const SKUDashboard = () => {
                   </p>
                 </div>
 
-                <div className="h-96 cursor-pointer" onClick={handleChartClick}>
+                <div className="h-96 cursor-pointer relative" onClick={handleChartClick}>
+                  {/* Debug info box */}
+                  {selectedOpCo === 'All' && availableOpCos.length > 0 && (
+                    <div className="bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-2 mb-2 rounded">
+                      Debug: Grouped view active | Categories: {chartData.length} | OpCos: {availableOpCos.join(', ')}
+                    </div>
+                  )}
+                  
+                  {/* Overlay separators */}
+                  {selectedOpCo === 'All' && availableOpCos.length > 0 && chartData.length > 1 && (
+                    <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
+                      {[...Array(chartData.length - 1)].map((_, index) => {
+                        // Calculate approximate position based on chart layout
+                        // Margins: left=20, right=30, top=20, bottom=70
+                        const totalWidth = 100; // percentage
+                        const leftMargin = 2.5; // approximate %
+                        const rightMargin = 3.75; // approximate %
+                        const chartWidth = totalWidth - leftMargin - rightMargin;
+                        const categoryWidth = chartWidth / chartData.length;
+                        const xPosition = leftMargin + (categoryWidth * (index + 1));
+                        
+                        return (
+                          <div
+                            key={`sep-${index}`}
+                            className="absolute border-l-2 border-dashed border-gray-400"
+                            style={{
+                              left: `${xPosition}%`,
+                              top: '20px',
+                              height: 'calc(100% - 90px)',
+                              pointerEvents: 'none'
+                            }}
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
+                  
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 70 }}>
+                    <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 70 }} barCategoryGap="20%">
+                      <defs>
+                        <pattern id="separator-pattern" patternUnits="userSpaceOnUse" width="4" height="4">
+                          <line x1="0" y1="0" x2="0" y2="4" stroke="#9ca3af" strokeWidth="1" />
+                        </pattern>
+                      </defs>
+                      
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                       <XAxis
                         dataKey="name"
@@ -632,7 +628,6 @@ const SKUDashboard = () => {
                         textAnchor="end"
                         height={90}
                         interval={0}
-                        type="category" /* THE FIX IS HERE */
                       />
                       <YAxis
                         tick={{ fontSize: 12 }}
@@ -706,11 +701,6 @@ const SKUDashboard = () => {
                           })}
                           <LabelList dataKey="value" content={renderBarLabel} />
                         </Bar>
-                      )}
-
-                      {/* separators between category groups (grouped view only) */}
-                      {selectedOpCo === 'All' && availableOpCos.length > 0 && (
-                        <Customized component={<CategorySeparators />} />
                       )}
                     </BarChart>
                   </ResponsiveContainer>

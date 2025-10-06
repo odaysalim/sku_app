@@ -8,7 +8,6 @@ import {
   Tooltip,
   ResponsiveContainer,
   LabelList,
-  Cell
 } from 'recharts';
 import { ChevronRight, Home, ArrowLeft, Upload, BarChart3 } from 'lucide-react';
 import Papa from "papaparse";
@@ -16,7 +15,11 @@ import Papa from "papaparse";
 const SKUDashboard = () => {
   const [data, setData] = useState([]);
   const [drillPath, setDrillPath] = useState([]);
-  const [selectedMetric, setSelectedMetric] = useState('Margin');
+  const [selectedMetric, setSelectedMetric] = useState('Margin %'); // default intent
+  const [selectedOpCo, setSelectedOpCo] = useState('All');
+  const [availableOpCos, setAvailableOpCos] = useState([]);
+  const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
+
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -37,7 +40,6 @@ const SKUDashboard = () => {
     return parseFloat(m[1]) * mult;
   };
 
-  // case-insensitive getter for numeric fields
   const getNum = (obj, candidates) => {
     const norm = (x) => x.toLowerCase().replace(/\s+|_/g, '');
     const keys = Object.keys(obj);
@@ -49,7 +51,6 @@ const SKUDashboard = () => {
     return 0;
   };
 
-  // --- number/label formatting ---
   const compactNumber = (n) => {
     const num = Number(n);
     const abs = Math.abs(num);
@@ -71,17 +72,6 @@ const SKUDashboard = () => {
 
   const formatMetricValue = (val) =>
     selectedMetric === 'Margin %' ? `${Number(val).toFixed(1)}%` : compactNumber(val);
-
-  // colors
-  const marginColor = (v) => (v > 0 ? '#16a34a' : v < 0 ? '#dc2626' : '#9ca3af'); // green / red / grey
-  const purpleShade = (t) => {
-    const clamp = (x) => Math.max(0, Math.min(1, x));
-    const lerp = (a, b, p) => Math.round(a + (b - a) * clamp(p));
-    const from = { r: 237, g: 233, b: 254 };
-    const to = { r: 91, g: 33, b: 182 };
-    const p = clamp(t);
-    return `rgb(${lerp(from.r, to.r, p)}, ${lerp(from.g, to.g, p)}, ${lerp(from.b, to.b, p)})`;
-  };
 
   // ---------- CSV/TSV upload ----------
   const handleFileUpload = async (event) => {
@@ -115,6 +105,7 @@ const SKUDashboard = () => {
                 else if (nk === 'item') out.item = val;
                 else if (nk === 'skucode') out.sku_code = (val || '').trim();
                 else if (nk === 'skudescription') out.sku_description = val;
+                else if (nk === 'opco') out.opco = val; // NEW
               }
 
               const measureNames = [
@@ -152,11 +143,18 @@ const SKUDashboard = () => {
           const metrics = [...numericCols];
           if (hasMargin && hasRevenue && !metrics.includes('Margin %')) metrics.push('Margin %');
 
+          const uniqueOpCos = [...new Set(normalized.map(r => r.opco).filter(Boolean))].sort();
+
           setData(normalized);
           setAvailableMetrics(metrics.length ? metrics : ['Margin', 'Revenue', 'Cost', 'No of Transactions']);
-          if (metrics.includes('Margin')) setSelectedMetric('Margin');
+          setAvailableOpCos(uniqueOpCos);
+          // Default to Margin %
+          if (metrics.includes('Margin %')) setSelectedMetric('Margin %');
+          else if (metrics.includes('Margin')) setSelectedMetric('Margin');
           else if (metrics.length > 0) setSelectedMetric(metrics[0]);
+          setSelectedOpCo('All');
           setDrillPath([]);
+          setSortConfig({ key: null, direction: 'asc' });
         },
         error: (e) => { throw e; },
       });
@@ -167,38 +165,39 @@ const SKUDashboard = () => {
     }
   };
 
-  // Filtered data based on drill path
+  // Filter by drill path + OpCo
   const filteredData = useMemo(() => {
     let filtered = [...data];
+    if (selectedOpCo !== 'All') filtered = filtered.filter((i) => i.opco === selectedOpCo);
     if (drillPath.length > 0) filtered = filtered.filter((i) => i.category === drillPath[0]);
     if (drillPath.length > 1) filtered = filtered.filter((i) => i.sub_category === drillPath[1]);
     if (drillPath.length > 2) filtered = filtered.filter((i) => i.item === drillPath[2]);
     return filtered;
-  }, [data, drillPath]);
+  }, [data, drillPath, selectedOpCo]);
 
-  // Grouping + chart data with full per-group metrics (and colors)
-  const { chartData, isLeafLevel } = useMemo(() => {
-    if (data.length === 0) return { chartData: [], isLeafLevel: false };
+  // Build chart data (grouped by OpCo when "All" is selected)
+  const { chartData, isLeafLevel, seriesKeys } = useMemo(() => {
+    if (data.length === 0) return { chartData: [], isLeafLevel: false, seriesKeys: [] };
 
     let groupCol;
-    let isLeaf = false;
-
     if (drillPath.length === 0) groupCol = 'category';
     else if (drillPath.length === 1) groupCol = 'sub_category';
     else if (drillPath.length === 2) groupCol = 'item';
-    else {
-      isLeaf = true;
-    }
+    else return { chartData: [], isLeafLevel: true, seriesKeys: [] };
 
-    if (!groupCol) return { chartData: [], isLeafLevel: true };
+    const groupedByDim = {};
+    const useGroupedOpco = selectedOpCo === 'All' && availableOpCos.length > 0;
 
-    // Build aggregated metrics for every group bucket
-    const grouped = filteredData.reduce((acc, row) => {
-      const key = row[groupCol];
-      if (!acc[key]) acc[key] = { sums: {}, marginSum: 0, revenueSum: 0 };
-      const bucket = acc[key];
+    filteredData.forEach((row) => {
+      const dim = row[groupCol];
+      if (!groupedByDim[dim]) groupedByDim[dim] = {};
+      const opcoKey = useGroupedOpco ? (row.opco || 'Unknown') : '__single__';
+      if (!groupedByDim[dim][opcoKey]) {
+        groupedByDim[dim][opcoKey] = { sums: {}, marginSum: 0, revenueSum: 0 };
+      }
+      const bucket = groupedByDim[dim][opcoKey];
 
-      // sum every numeric metric (except Margin %, which is derived)
+      // sum numeric metrics (except derived %)
       availableMetrics
         .filter((m) => m !== 'Margin %')
         .forEach((m) => {
@@ -206,47 +205,39 @@ const SKUDashboard = () => {
           bucket.sums[m] = (bucket.sums[m] || 0) + (Number.isFinite(v) ? v : 0);
         });
 
-      // track margin & revenue for % calc (case-insensitive)
       bucket.marginSum += getNum(row, ['Margin', 'margin']);
       bucket.revenueSum += getNum(row, ['Revenue', 'revenue']);
-
-      return acc;
-    }, {});
-
-    // Convert to chart rows with colors + derived Margin %
-    let temp = Object.entries(grouped).map(([name, agg]) => {
-      const metricsMap = { ...agg.sums };
-      const marginPct = agg.revenueSum > 0 ? (agg.marginSum / agg.revenueSum) * 100 : 0;
-      metricsMap['Margin %'] = marginPct;
-
-      const plottedValue = metricsMap[selectedMetric] ?? 0;
-
-      return {
-        name,
-        value: plottedValue,
-        __metrics: metricsMap,       // all measures for tooltip
-      };
     });
 
-    // alphabetical sort
-    temp.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    // pivot -> one object per dimension, with keys per series (opco)
+    const rows = Object.entries(groupedByDim).map(([dim, opcoMap]) => {
+      const obj = { name: dim, __byOpCo: {} };
+      Object.entries(opcoMap).forEach(([opcoKey, agg]) => {
+        const metricsMap = { ...agg.sums };
+        metricsMap['Margin %'] = agg.revenueSum > 0 ? (agg.marginSum / agg.revenueSum) * 100 : 0;
+        const plotted = metricsMap[selectedMetric] ?? 0;
 
-    // assign colors based on selected metric
-    if (selectedMetric === 'Margin %') {
-      temp = temp.map((d) => ({ ...d, fill: marginColor(d.value) }));
-    } else {
-      const vals = temp.map((d) => d.value);
-      const min = Math.min(...vals);
-      const max = Math.max(...vals);
-      const span = max - min || 1;
-      temp = temp.map((d) => {
-        const t = (d.value - min) / span;
-        return { ...d, fill: purpleShade(t) };
+        if (useGroupedOpco) {
+          obj[opcoKey] = plotted;
+          obj.__byOpCo[opcoKey] = metricsMap;
+        } else {
+          obj.value = plotted;
+          obj.__metrics = metricsMap;
+        }
       });
-    }
+      return obj;
+    });
 
-    return { chartData: temp, isLeafLevel: false };
-  }, [filteredData, drillPath, selectedMetric, data, availableMetrics]);
+    // sort by name
+    rows.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+
+    // dynamic series keys
+    const keys = (selectedOpCo === 'All')
+      ? (availableOpCos.length ? availableOpCos : [])
+      : [];
+
+    return { chartData: rows, isLeafLevel: false, seriesKeys: keys };
+  }, [filteredData, drillPath, selectedMetric, data, availableMetrics, selectedOpCo, availableOpCos]);
 
   // Handlers
   const handleBarClick = (d) => {
@@ -262,15 +253,52 @@ const SKUDashboard = () => {
   };
   const goHome = () => setDrillPath([]);
 
+  // sorting for leaf table
+  const handleSort = (key) => {
+    let direction = 'asc';
+    if (sortConfig.key === key && sortConfig.direction === 'asc') direction = 'desc';
+    setSortConfig({ key, direction });
+  };
+
+  const sortedFilteredData = useMemo(() => {
+    if (!sortConfig.key) return filteredData;
+
+    const sorted = [...filteredData].sort((a, b) => {
+      let aVal = a[sortConfig.key];
+      let bVal = b[sortConfig.key];
+
+      if (sortConfig.key === 'Margin %') {
+        const aM = getNum(a, ['Margin', 'margin']);
+        const aR = getNum(a, ['Revenue', 'revenue']);
+        const bM = getNum(b, ['Margin', 'margin']);
+        const bR = getNum(b, ['Revenue', 'revenue']);
+        aVal = aR > 0 ? (aM / aR) * 100 : 0;
+        bVal = bR > 0 ? (bM / bR) * 100 : 0;
+      } else if (typeof aVal === 'number' && typeof bVal === 'number') {
+        aVal = Number(aVal) || 0;
+        bVal = Number(bVal) || 0;
+      } else {
+        aVal = String(aVal || '').toLowerCase();
+        bVal = String(bVal || '').toLowerCase();
+      }
+
+      if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return sorted;
+  }, [filteredData, sortConfig]);
+
   const breadcrumbs = ['All Categories', ...drillPath];
 
-  // ---- custom label renderer: avoids overlapping with axis (dynamic offset) ----
+  // label renderer
   const renderBarLabel = ({ x, y, width, height, value }) => {
     const isNeg = Number(value) < 0;
     const cx = x + width / 2;
 
     const h = Math.max(0, Number(height) || 0);
-    const base = 16; // px
+    const base = 16;
     const extraForTiny = Math.max(0, 22 - Math.min(22, h));
     const away = base + extraForTiny;
 
@@ -290,25 +318,48 @@ const SKUDashboard = () => {
     );
   };
 
-  // ---- custom tooltip: show ALL measures for this bar ----
+  // tooltip
   const CustomTooltip = ({ active, payload, label }) => {
     if (!active || !payload || !payload.length) return null;
     const row = payload[0].payload;
-    const metricsMap = row.__metrics || {};
-    // Keep the tooltip order aligned with dropdown
-    const order = availableMetrics;
 
-    return (
-      <div
-        style={{
+    // grouped mode: show selected metric per OpCo
+    if (row.__byOpCo) {
+      return (
+        <div style={{
           background: 'white',
           border: '1px solid #e5e7eb',
           borderRadius: 8,
           padding: '10px 12px',
           boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)',
           maxWidth: 260,
-        }}
-      >
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>{label}</div>
+          {availableOpCos.map((op) => (
+            <div key={op} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+              <span style={{ color: '#6b7280' }}>{op}</span>
+              <span style={{ color: '#111827' }}>
+                {formatSpecific(selectedMetric, (row.__byOpCo[op]?.[selectedMetric]) ?? 0)}
+              </span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // single-series mode: show all measures
+    const metricsMap = row.__metrics || {};
+    const order = availableMetrics;
+
+    return (
+      <div style={{
+        background: 'white',
+        border: '1px solid #e5e7eb',
+        borderRadius: 8,
+        padding: '10px 12px',
+        boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)',
+        maxWidth: 260,
+      }}>
         <div style={{ fontWeight: 600, marginBottom: 6 }}>{label}</div>
         {order.map((m) => (
           <div key={m} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
@@ -345,7 +396,7 @@ const SKUDashboard = () => {
                   <input type="file" accept=".csv,.tsv,.txt" onChange={handleFileUpload} className="hidden" />
                 </label>
                 <p className="text-gray-500 mt-2">
-                  File should contain: category, sub_category (or sub-category), item, sku_code, and your metrics
+                  File should contain: category, sub_category (or sub-category), item, sku_code, <b>opco</b>, and your metrics
                 </p>
               </div>
               {isLoading && <div className="text-center mt-4 text-blue-600">Loading data...</div>}
@@ -375,6 +426,25 @@ const SKUDashboard = () => {
                         </option>
                       ))}
                     </select>
+
+                    {availableOpCos.length > 0 && (
+                      <>
+                        <label className="text-sm font-medium text-gray-700">OpCo:</label>
+                        <select
+                          value={selectedOpCo}
+                          onChange={(e) => setSelectedOpCo(e.target.value)}
+                          className="border border-gray-300 rounded-md px-3 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          <option value="All">All</option>
+                          {availableOpCos.map((opco) => (
+                            <option key={opco} value={opco}>
+                              {opco}
+                            </option>
+                          ))}
+                        </select>
+                      </>
+                    )}
+
                     <div className="text-sm text-gray-500">{data.length} records loaded</div>
                   </div>
                   <button
@@ -382,6 +452,8 @@ const SKUDashboard = () => {
                       setData([]);
                       setDrillPath([]);
                       setError('');
+                      setSelectedOpCo('All');
+                      setSortConfig({ key: null, direction: 'asc' });
                     }}
                     className="text-sm text-blue-600 hover:text-blue-800"
                   >
@@ -393,19 +465,19 @@ const SKUDashboard = () => {
               {/* Nav bar */}
               <div className="flex items-center justify-between bg-white rounded-lg shadow-sm p-4">
                 <div className="flex items-center space-x-2">
-                  {breadcrumbs.map((crumb, index) => (
+                  {(['All Categories', ...drillPath]).map((crumb, index, arr) => (
                     <div key={index} className="flex items-center">
                       <button
                         onClick={() => setDrillPath(drillPath.slice(0, index))}
                         className={`px-3 py-1 rounded transition-colors ${
-                          index === breadcrumbs.length - 1
+                          index === arr.length - 1
                             ? 'bg-blue-100 text-blue-800 font-medium'
                             : 'text-gray-600 hover:bg-gray-100'
                         }`}
                       >
                         {crumb}
                       </button>
-                      {index < breadcrumbs.length - 1 && (
+                      {index < arr.length - 1 && (
                         <ChevronRight className="w-4 h-4 text-gray-400 mx-1" />
                       )}
                     </div>
@@ -469,7 +541,7 @@ const SKUDashboard = () => {
                           selectedMetric === 'Margin %'
                             ? (() => {
                                 const n = Number(v);
-                                return Number.isFinite(n) ? `${n.toFixed(1)}%` : '0.0%';
+                                return Number.isFinite(n) ? `${n.toFixed(1)}%` : '0.0%`;
                               })()
                             : compactNumber(v)
                         }
@@ -481,12 +553,31 @@ const SKUDashboard = () => {
                         }
                       />
                       <Tooltip content={<CustomTooltip />} />
-                      <Bar dataKey="value" radius={[4, 4, 0, 0]} cursor="pointer" onClick={handleBarClick}>
-                        {chartData.map((entry, idx) => (
-                          <Cell key={`c-${idx}`} fill={entry.fill} />
-                        ))}
-                        <LabelList dataKey="value" content={renderBarLabel} />
-                      </Bar>
+
+                      {/* Bars:
+                          - If "All" OpCos => side-by-side bars per OpCo
+                          - Else           => single series using "value"
+                      */}
+                      {selectedOpCo === 'All' && availableOpCos.length > 0 ? (
+                        <>
+                          {availableOpCos.map((opco, idx) => (
+                            <Bar
+                              key={opco}
+                              dataKey={opco}
+                              name={opco}
+                              radius={[4, 4, 0, 0]}
+                              cursor="pointer"
+                              onClick={(d) => handleBarClick(d)}
+                            >
+                              <LabelList dataKey={opco} content={renderBarLabel} />
+                            </Bar>
+                          ))}
+                        </>
+                      ) : (
+                        <Bar dataKey="value" radius={[4, 4, 0, 0]} cursor="pointer" onClick={handleBarClick}>
+                          <LabelList dataKey="value" content={renderBarLabel} />
+                        </Bar>
+                      )}
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -502,30 +593,43 @@ const SKUDashboard = () => {
                   <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
                       <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          SKU Code
+                        <th
+                          className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                          onClick={() => handleSort('sku_code')}
+                        >
+                          SKU Code {sortConfig.key === 'sku_code' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
                         </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Description
+                        <th
+                          className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                          onClick={() => handleSort('sku_description')}
+                        >
+                          Description {sortConfig.key === 'sku_description' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
                         </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Category
+                        <th
+                          className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                          onClick={() => handleSort('category')}
+                        >
+                          Category {sortConfig.key === 'category' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
                         </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Sub Category
+                        <th
+                          className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                          onClick={() => handleSort('sub_category')}
+                        >
+                          Sub Category {sortConfig.key === 'sub_category' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
                         </th>
                         {availableMetrics.map((metric) => (
                           <th
                             key={metric}
-                            className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                            className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                            onClick={() => handleSort(metric)}
                           >
-                            {metric}
+                            {metric} {sortConfig.key === metric && (sortConfig.direction === 'asc' ? '↑' : '↓')}
                           </th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                      {filteredData.map((row, idx) => (
+                      {sortedFilteredData.map((row, idx) => (
                         <tr key={idx} className="hover:bg-gray-50">
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                             {row.sku_code}

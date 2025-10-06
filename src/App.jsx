@@ -364,39 +364,45 @@ const SKUDashboard = () => {
     );
   };
 
-  // --------- CATEGORY SEPARATORS (tick-based; one line between category groups) ---------
+  // --------- CATEGORY SEPARATORS (robust path lines; one line between category groups) ---------
   const CategorySeparators = ({ xAxisMap, offset }) => {
     if (!xAxisMap) return null;
+  
+    // Find the categorical X axis (dataKey="name")
     const axes = Object.values(xAxisMap);
     const catAxis = axes.find(a => a?.props?.dataKey === 'name') || axes[0];
-    const ticks = catAxis?.ticks;
+    const ticks = catAxis?.ticks; // [{ coord, value }, ...]
     if (!ticks || ticks.length < 2) return null;
-
+  
     const top = offset.top;
     const bottom = offset.top + offset.height;
-
-    const lines = [];
+  
+    // Build <path> segments "M x,top V x,bottom" (stroke only, fill none)
+    const segments = [];
     for (let i = 0; i < ticks.length - 1; i++) {
       const curr = Number(ticks[i].coord);
       const next = Number(ticks[i + 1].coord);
       if (!Number.isFinite(curr) || !Number.isFinite(next)) continue;
-      const sepX = (curr + next) / 2;
-      lines.push(
-        <line
-          key={`sep-${i}`}
-          x1={sepX}
-          x2={sepX}
-          y1={top}
-          y2={bottom}
-          stroke="#d1d5db"
-          strokeWidth="1"
-          strokeDasharray="2 2"
-          pointerEvents="none"
-        />
-      );
+      const x = (curr + next) / 2; // midpoint between category centers
+  
+      segments.push(`M ${x} ${top} V ${x} ${bottom}`);
     }
-    return <g>{lines}</g>;
+  
+    if (!segments.length) return null;
+  
+    return (
+      <path
+        d={segments.join(' ')}
+        stroke="#d1d5db"          // gray-300
+        strokeWidth="1"
+        strokeDasharray="2 2"
+        fill="none"
+        pointerEvents="none"
+        shapeRendering="crispEdges"
+      />
+    );
   };
+
 
   // tooltip
   const CustomTooltip = ({ active, payload, label }) => {

@@ -364,45 +364,47 @@ const SKUDashboard = () => {
     );
   };
 
-  // --------- CATEGORY SEPARATORS (FIXED) ---------
+  // --------- CATEGORY SEPARATORS (ROBUST VERSION) ---------
   const CategorySeparators = ({ xAxisMap, offset }) => {
-    // Guard against props not being ready on the initial render
     if (!xAxisMap || !offset) return null;
 
-    const axes = Object.values(xAxisMap);
-    const catAxis = axes.find(a => a?.props?.dataKey === 'name') || axes[0];
-    
-    // Ensure the axis and its ticks are available
-    if (!catAxis || !catAxis.ticks || catAxis.ticks.length < 2) {
+    const axis = Object.values(xAxisMap)[0];
+    if (!axis || !axis.ticks || axis.ticks.length < 2) {
       return null;
     }
 
-    const { ticks } = catAxis;
+    const { ticks } = axis;
     const top = offset.top;
     const bottom = offset.top + offset.height;
 
+    // Helper to safely get the coordinate regardless of the property name
+    const getCoord = (tick) => tick.coordinate ?? tick.coord;
+
     const lines = [];
     for (let i = 0; i < ticks.length - 1; i++) {
-      // FIX: The property for the tick's x-position is `coordinate`, not `coord`.
-      const curr = Number(ticks[i].coordinate);
-      const next = Number(ticks[i + 1].coordinate);
-      
-      if (!Number.isFinite(curr) || !Number.isFinite(next)) continue;
-      
-      const sepX = (curr + next) / 2;
-      lines.push(
-        <line
-          key={`sep-${i}`}
-          x1={sepX}
-          x2={sepX}
-          y1={top}
-          y2={bottom}
-          stroke="#e5e7eb"
-          strokeWidth="1"
-          strokeDasharray="3 3"
-          pointerEvents="none"
-        />
-      );
+      const currTick = ticks[i];
+      const nextTick = ticks[i + 1];
+
+      // Use the helper to get the coordinate value
+      const curr = Number(getCoord(currTick));
+      const next = Number(getCoord(nextTick));
+
+      if (Number.isFinite(curr) && Number.isFinite(next)) {
+        const sepX = (curr + next) / 2;
+        lines.push(
+          <line
+            key={`sep-${i}`}
+            x1={sepX}
+            x2={sepX}
+            y1={top}
+            y2={bottom}
+            stroke="#e5e7eb"
+            strokeWidth="1"
+            strokeDasharray="3 3"
+            pointerEvents="none"
+          />
+        );
+      }
     }
     return <g>{lines}</g>;
   };
